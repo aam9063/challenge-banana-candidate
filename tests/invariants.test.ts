@@ -298,6 +298,17 @@ test('knowledge instructions require citations and forbid invented answers', asy
   // Pending transfers must be described as proposals, never as executed operations.
   assert.match(instructions, /requires_confirmation/);
   assert.match(instructions, /NOT been executed/i);
+  // A complete transfer request must produce a real tool call in the same turn,
+  // never a prose-only 'proposal' asking the customer to confirm nothing.
+  assert.match(instructions, /MUST call the transfer_money tool in that same turn/i);
+  assert.match(instructions, /never ask the customer to confirm a transfer you have not created/i);
+  // Asking first is reserved for genuinely missing details.
+  assert.match(instructions, /ONLY when a required detail is genuinely missing/i);
+  // The confirmation card is automatic from the tool result; the agent never invents it.
+  assert.match(instructions, /confirmation card/i);
+  assert.match(instructions, /Never invent an approval/i);
+  // Citations are scoped to documentation claims, never transfer/tool statements.
+  assert.match(instructions, /do NOT attach \[docId vN\] tokens to transfer or tool statements/i);
 });
 
 test('search without an API key returns actionable configuration guidance', async () => {
@@ -770,10 +781,10 @@ const conversationResponse = async (conversationId: string) => {
     { params: Promise.resolve({ path: ['conversations', conversationId] }) },
   );
 };
-const conversationProposal = async (conversationId: string, intentId: string) =>
+const conversationProposal = async (conversationId: string, intentId: string, payload = input) =>
   (await transferMoney(
     { userId: 'lucia', conversationId, runId: `run-${intentId}`, intentId },
-    input,
+    payload,
   )) as any;
 const receiptCount = (conversationId: string) =>
   (
@@ -973,6 +984,114 @@ test('the cancellation message falls back to account ids when the label lookup f
   } finally {
     fakeBank.behavior.contacts = null;
   }
+});
+
+// --- One pending proposal per conversation: reuse and supersede ---
+test('a different proposal in the same conversation supersedes the previous one', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  const conversationId = 'conv-supersede';
+  createConversation(conversationId, 'Supersede');
+  const first = await conversationProposal(conversationId, 'intent-supersede-a', input);
+  const second = await conversationProposal(conversationId, 'intent-supersede-b', {
+    ...input,
+    amountCents: 2500,
+    concept: 'Rent',
+  });
+  assert.equal(first.status, 'requires_confirmation');
+  assert.equal(second.status, 'requires_confirmation');
+  assert.notEqual(second.approvalId, first.approvalId);
+
+  // The superseded proposal was cancelled silently, exactly once pending.
+  const row = appDb()
+    .prepare('SELECT cancelled_at FROM approvals WHERE id=?')
+    .get(first.approvalId) as any;
+  assert.ok(row.cancelled_at);
+  const conversation = await (await conversationResponse(conversationId)).json();
+  assert.deepEqual(
+    (conversation.pendingApprovals as any[]).map((a) => a.id),
+    [second.approvalId],
+  );
+  const dashboard = await (await dashboardResponse()).json();
+  assert.deepEqual((dashboard.approvals as any[]).map((a) => a.id), [second.approvalId]);
+
+  // Confirming the superseded proposal is refused and moves no money.
+  const response = await confirmResponse(first.approvalId);
+  assert.equal(response.status, 409);
+  assert.match((await response.json()).error, /cancelled/i);
+  assert.equal(transferPosts(), 0);
+});
+
+test('an identical repeat in the same conversation reuses the same approvalId', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  const conversationId = 'conv-reuse';
+  createConversation(conversationId, 'Reuse');
+  const first = await conversationProposal(conversationId, 'intent-reuse-a', input);
+  const second = await conversationProposal(conversationId, 'intent-reuse-b', input);
+  assert.equal(first.status, 'requires_confirmation');
+  assert.equal(second.status, 'requires_confirmation');
+  assert.equal(second.approvalId, first.approvalId);
+  // No second row: the repeat is idempotent, not a new proposal.
+  const count = (
+    appDb()
+      .prepare(
+        'SELECT COUNT(*) n FROM approvals a JOIN intents i ON i.id=a.intent_id WHERE i.conversation_id=?',
+      )
+      .get(conversationId) as { n: number }
+  ).n;
+  assert.equal(count, 1);
+});
+
+test('proposals in different conversations do not affect each other', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  createConversation('conv-iso-a', 'Isolation A');
+  createConversation('conv-iso-b', 'Isolation B');
+  const a = await conversationProposal('conv-iso-a', 'intent-iso-a', input);
+  const b = await conversationProposal('conv-iso-b', 'intent-iso-b', {
+    ...input,
+    amountCents: 2500,
+  });
+  const pendingIds = async (conversationId: string) =>
+    ((await (await conversationResponse(conversationId)).json()).pendingApprovals as any[]).map(
+      (x) => x.id,
+    );
+  assert.deepEqual(await pendingIds('conv-iso-a'), [a.approvalId]);
+  assert.deepEqual(await pendingIds('conv-iso-b'), [b.approvalId]);
+
+  // Confirming one leaves the other conversation's proposal untouched.
+  const confirmed = await confirmResponse(a.approvalId);
+  assert.equal(confirmed.status, 200);
+  assert.deepEqual(await pendingIds('conv-iso-b'), [b.approvalId]);
+  const dashboard = await (await dashboardResponse()).json();
+  assert.deepEqual((dashboard.approvals as any[]).map((x) => x.id), [b.approvalId]);
+});
+
+test('proposals without a conversation are not superseded by each other', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  const first = (await transferMoney(transferContext('intent-noconv-a'), input)) as any;
+  const second = (await transferMoney(transferContext('intent-noconv-b'), {
+    ...input,
+    amountCents: 2500,
+  })) as any;
+  assert.equal(first.status, 'requires_confirmation');
+  assert.equal(second.status, 'requires_confirmation');
+  // Without a conversation there is no supersede scope: both stay pending.
+  const rows = appDb()
+    .prepare('SELECT cancelled_at FROM approvals WHERE user_id=? ORDER BY rowid')
+    .all('lucia') as any[];
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((r) => r.cancelled_at), [null, null]);
 });
 
 // --- Operator visibility: telemetry, case detail, case closure ---

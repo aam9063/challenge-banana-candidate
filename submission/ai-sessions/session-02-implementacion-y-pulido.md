@@ -170,6 +170,38 @@ DOUBLE DEBIT CONFIRMED: one €1.00 intention debited €3.00.
 
 **Verificación**: 3 tests nuevos con TDD (RED observado) → **40/40**; en vivo: doble cancel → **un solo** mensaje *"Transfer cancelled: EUR 4.50 from your Aurora account to Bruno Vidal's Horizon account (concept: parent cancel msg) was not sent. No money has moved."* y `pendingApprovals` a 0.
 
+## Fase 9 — El agente prometía una confirmación que no creaba
+
+**Contexto**: el usuario reportó que al pedir una transferencia ya no aparecía la tarjeta. Diagnóstico (inicialmente con el observable equivocado, corregido después): en la conversación `d36672a7` la tabla `events` muestra **solo `list_accounts`** — cero eventos `transfer_money`, cero intents. El modelo respondió en prosa (*"I can send €1.00… Please confirm these details before I proceed"*) sin llamar a la herramienta, así que no existía propuesta y no había tarjeta. Causa: la reescritura evidencia-first explicaba qué hacer **después** de `requires_confirmation`, pero no exigía **crearla**.
+
+**Corrección de método importante**: el asistente había citado como evidencia "no hubo `POST /api/actions`" — pero ese endpoint es el del **formulario manual**; las tool calls del agente ocurren in-process dentro de `sendMessage` y no generan HTTP. El observable correcto es la tabla `events` (telemetría `tool.started`/`tool.completed`). Lección registrada: verificar el canal real de la evidencia antes de afirmar la causa.
+
+**Arreglo**: reglas imperativas en `prompt.ts` (llamar a `transfer_money` en el mismo turno cuando monto/origen/destino se conocen; prohibido presentar un resumen en prosa como propuesta; preguntar solo si falta un dato real; `requires_confirmation` = no enviada y la tarjeta aparece del resultado del tool; citas solo para documentación) + una línea en el suffix de `run.ts`.
+
+**Verificación propia (observable = `events`)**: petición completa → `list_accounts` → `transfer_money` → `requires_confirmation` con `approvalId`, 1 intent, `pendingApprovals` = 1 en la conversación, y respuesta que guía a la tarjeta. Worker: 2/2 en peticiones completas, 2/3 preguntando la cuenta cuando es ambigua (y siempre creando la propuesta en el turno siguiente). **40/40 tests.**
+
+## Fase 10 — Una sola propuesta pendiente por conversación (y fin del panel duplicado)
+
+**Contexto**: el usuario reportó propuestas en el panel que no correspondían a su conversación. Diagnóstico: **restos de smoke tests** (del asistente y del worker) sobre el mismo usuario Lucía — 4 propuestas pendientes huérfanas. Limpieza vía API (0 pendientes) + eliminación de 4 conversaciones vacías de prueba.
+
+**Dos causas de fondo corregidas**:
+1. **Acumulación**: cada turno del agente crea un intent nuevo → propuesta nueva; los reintentos se apilaban. Ahora: petición idéntica en la misma conversación → **reutiliza** la propuesta (mismo `approvalId`, sin fila nueva); petición distinta → **supersede** las anteriores de esa conversación con un UPDATE directo (silencio: no es un descarte del usuario, no debe generar mensaje). El UPDATE se acota con `intent_id IN (SELECT id FROM intents WHERE conversation_id=?)`, de modo que otras conversaciones y las propuestas sin conversación quedan intactas.
+2. **Panel duplicado**: el panel de propuestas se renderizaba también bajo el chat. Ahora solo en Overview; el chat usa su tarjeta inline (una por propuesta pendiente).
+
+**Verificación en vivo (asistente)**: A(100c) → B(200c) supersede A y confirmar A da 409 → C(200c idéntica a B) reutiliza el mismo `approvalId`; conversación y dashboard muestran exactamente 1. 4 tests nuevos (**44/44**).
+
+**Lección de método registrada**: los smoke tests no deben contaminar los datos de demo; hay que limpiar las propuestas pendientes al terminar cada verificación (y evitar dejar conversaciones vacías).
+
+## Fase 11 — Medición antes/después (eval de respuestas) y evidencia del starter
+
+**Trabajo**: (1) mapa explícito **cláusula de `contracts.md` → bug → reproducción → arreglo → verificación** en el work-log, incluyendo las dos cláusulas que ya se cumplían (verificadas para descartarlas); (2) documentación de los **casos sembrados** del starter como evidencia propia, verificados en vivo; (3) **eval medido** con `scripts/eval-answers.ts` (7 preguntas con verdad de referencia y trampa de valores prohibidos, 2 repeticiones por lado, base `db0bdf5` en puertos 3010/4011 vía worktree desechable).
+
+**Resultado**: BEFORE 1/14 pasan y 0/14 citan; AFTER **14/14 pasan y 12/12 de las citas exigidas**. Lectura honesta: el delta es **trazabilidad**, no acierto factual (el base acertó los hechos en las 14 respuestas). Ninguna de las 28 respuestas inventó cifras.
+
+**Verificación de los casos sembrados (en vivo, after)**: Elena ya no responde "Transfer completed" ante una pregunta informativa (explica qué revisar y aclara que no ha enviado nada, con 0 propuestas creadas); Inés ya no inventa "EUR 30" por referidos (admite que no hay documentación aplicable y ofrece dos siguientes pasos).
+
+**Límites declarados**: el instrumento puntúa por presencia/ausencia de cifras (posible falso negativo ante respuestas comparativas; sesgo en contra de nuestra medición); y el arreglo no recupera valores archivados para preguntas históricas — verificado que en ese caso admite el hueco y ofrece soporte, sin inventar.
+
 ## Decisiones transversales y su porqué
 
 | Decisión | Porqué |
