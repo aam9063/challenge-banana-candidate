@@ -13,7 +13,7 @@ const { transfer, listAccounts, setScenario, operationByReference } =
   await import('../simulator/bank');
 const { seedApp } = await import('../src/seed');
 const { appDb, closeAppDb } = await import('../src/db');
-const { actor, sessionToken, sameOrigin } = await import('../src/auth');
+const { actor, sessionToken, sameOrigin, HttpError } = await import('../src/auth');
 const { documents, readDocument } = await import('../src/ingestion/pipeline');
 const { chunkDocument } = await import('../src/ingestion/chunker');
 const { allChunks, replaceChunks } = await import('../src/retrieval/store');
@@ -410,7 +410,12 @@ test('a committed transfer with a lost response is debited exactly once', async 
     return { status: 504 };
   };
   const intentId = 'intent-lost-response';
-  const first = await transferMoney(transferContext(intentId), input);
+  const proposal = (await transferMoney(transferContext(intentId), input)) as any;
+  assert.equal(proposal.status, 'requires_confirmation');
+  const first = await transferMoney(
+    { ...transferContext(intentId), approvalId: proposal.approvalId },
+    input,
+  );
   const retry = await transferMoney(transferContext(intentId), input);
   assert.equal(first.status, 'completed');
   assert.equal(retry.status, 'completed');
@@ -429,7 +434,12 @@ test('a rejection before commit is reported as failed after verified absence', a
   fakeBank.requests.length = 0;
   fakeBank.behavior.transfer = () => ({ status: 503 });
   const intentId = 'intent-reject-before';
-  const result = await transferMoney(transferContext(intentId), input);
+  const proposal = (await transferMoney(transferContext(intentId), input)) as any;
+  assert.equal(proposal.status, 'requires_confirmation');
+  const result = await transferMoney(
+    { ...transferContext(intentId), approvalId: proposal.approvalId },
+    input,
+  );
   assert.equal(result.status, 'failed');
   assert.equal(intentRow(intentId).status, 'failed');
   assert.equal(fakeBank.operations.size, 0);
@@ -444,7 +454,12 @@ test('a committed operation unreachable through dispatch is recovered by reconci
     return { status: 504 };
   };
   const intentId = 'intent-reconcile-found';
-  const result = await transferMoney(transferContext(intentId), input);
+  const proposal = (await transferMoney(transferContext(intentId), input)) as any;
+  assert.equal(proposal.status, 'requires_confirmation');
+  const result = await transferMoney(
+    { ...transferContext(intentId), approvalId: proposal.approvalId },
+    input,
+  );
   assert.equal(result.status, 'completed');
   assert.equal(intentRow(intentId).status, 'completed');
 });
@@ -459,7 +474,12 @@ test('an unverifiable outcome stays processing and is never reported failed', as
   };
   fakeBank.behavior.lookup = () => ({ status: 503 });
   const intentId = 'intent-unverified';
-  const result = await transferMoney(transferContext(intentId), input);
+  const proposal = (await transferMoney(transferContext(intentId), input)) as any;
+  assert.equal(proposal.status, 'requires_confirmation');
+  const result = await transferMoney(
+    { ...transferContext(intentId), approvalId: proposal.approvalId },
+    input,
+  );
   assert.equal(result.status, 'processing');
   assert.ok(String((result as any).message).length > 0);
   assert.equal(intentRow(intentId).status, 'processing');
@@ -473,6 +493,121 @@ test('an unverifiable outcome stays processing and is never reported failed', as
     fakeBank.requests.filter((r) => r.method === 'POST' && r.path === '/v1/transfers').length,
     posts,
   );
+});
+
+// --- Confirmation flow (sensitive operations require explicit approval) ---
+const resetApprovalBehavior = () => {
+  fakeBank.behavior.transfer = null;
+  fakeBank.behavior.lookup = null;
+};
+const transferPosts = () =>
+  fakeBank.requests.filter((r) => r.method === 'POST' && r.path === '/v1/transfers').length;
+const confirmResponse = async (approvalId: string) => {
+  const { POST } = await import('../app/api/[...path]/route');
+  return POST(
+    new Request(`http://localhost/api/approvals/${approvalId}/confirm`, {
+      method: 'POST',
+      headers: { cookie: `banana_actor=${sessionToken('lucia')}` },
+    }),
+    { params: Promise.resolve({ path: ['approvals', approvalId, 'confirm'] }) },
+  );
+};
+
+test('an agent-initiated transfer proposes confirmation instead of dispatching', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  const intentId = 'intent-unconfirmed';
+  const result = (await transferMoney(transferContext(intentId), input)) as any;
+  assert.equal(result.status, 'requires_confirmation');
+  assert.ok(typeof result.approvalId === 'string' && result.approvalId.length > 0);
+  assert.ok(typeof result.expiresAt === 'string');
+  assert.deepEqual(result.proposal, input);
+  assert.equal(transferPosts(), 0);
+  assert.equal(intentRow(intentId).status, 'created');
+
+  // A retry of the same intent must return the same pending proposal.
+  const retry = (await transferMoney(transferContext(intentId), input)) as any;
+  assert.equal(retry.status, 'requires_confirmation');
+  assert.equal(retry.approvalId, result.approvalId);
+  assert.equal(
+    (
+      appDb().prepare('SELECT COUNT(*) n FROM approvals WHERE intent_id=?').get(intentId) as {
+        n: number;
+      }
+    ).n,
+    1,
+  );
+});
+
+test('confirming a proposal dispatches exactly one transfer and consumes the approval', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  const intentId = 'intent-confirmed';
+  const proposal = (await transferMoney(transferContext(intentId), input)) as any;
+  const confirmed = await transferMoney(
+    { ...transferContext(intentId), approvalId: proposal.approvalId },
+    input,
+  );
+  assert.equal(confirmed.status, 'completed');
+  assert.equal(fakeBank.operations.size, 1);
+  assert.equal(transferPosts(), 1);
+  const approval = appDb()
+    .prepare('SELECT consumed_at FROM approvals WHERE id=?')
+    .get(proposal.approvalId) as any;
+  assert.ok(approval.consumed_at);
+});
+
+test('confirming the same proposal twice is rejected with 409 and debits once', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  const intentId = 'intent-double-confirm';
+  const proposal = (await transferMoney(transferContext(intentId), input)) as any;
+  const first = await confirmResponse(proposal.approvalId);
+  assert.equal(first.status, 200);
+  assert.equal((await first.json()).status, 'completed');
+  const second = await confirmResponse(proposal.approvalId);
+  assert.equal(second.status, 409);
+  assert.equal(transferPosts(), 1);
+});
+
+test('confirming an expired proposal is rejected with 410', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  const intentId = 'intent-expired';
+  const proposal = (await transferMoney(transferContext(intentId), input)) as any;
+  appDb()
+    .prepare('UPDATE approvals SET expires_at=? WHERE id=?')
+    .run(new Date(Date.now() - 1000).toISOString(), proposal.approvalId);
+  const response = await confirmResponse(proposal.approvalId);
+  assert.equal(response.status, 410);
+  assert.equal(transferPosts(), 0);
+});
+
+test('confirming an approval whose stored payload was tampered with is rejected with 409', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  const intentId = 'intent-tampered';
+  const proposal = (await transferMoney(transferContext(intentId), input)) as any;
+  appDb()
+    .prepare('UPDATE approvals SET payload=? WHERE id=?')
+    .run(JSON.stringify({ ...input, amountCents: 999 }), proposal.approvalId);
+  await assert.rejects(
+    () =>
+      transferMoney({ ...transferContext(intentId), approvalId: proposal.approvalId }, input),
+    (e: unknown) =>
+      e instanceof HttpError && e.status === 409 && /does not match/i.test(e.message),
+  );
+  assert.equal(transferPosts(), 0);
 });
 
 after(() => {
