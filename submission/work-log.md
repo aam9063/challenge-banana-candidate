@@ -190,3 +190,41 @@ Una capa de confianza sobre el asistente que cubre dos contratos incumplidos a l
 4. **Double-confirm bloqueado**: segundo click en Confirm → 409 "This proposal was already confirmed."
 5. **Exactly-once bajo fallo**: con `npm run scenario -- lost-response`, repetir el flujo → exactamente €1 debitado (`scripts/repro-double-debit.ts` imprime "No double debit observed").
 6. **Cierre**: saldos consistentes entre UI y banco en todo momento.
+
+---
+
+## 5. Bug 3 (resto) + Bug 4: Visibilidad de operador y telemetría
+
+**Fecha**: 28-09-2026 · **Severidad**: media-alta (resolución de casos) · **Estado**: RESUELTO · **Rama**: `fix/operator-visibility` (commit `691c5b1`)
+
+### El problema
+
+El contrato exige: *"Operators need to understand the conversation, relevant steps, and effects"* y *"Historical evidence that was never recorded must not be invented"*. Pero:
+
+1. `src/operator/view.ts`: `caseDetail` devolvía `history: [], events: [], intents: [], bank: null` hardcodeados — la vista de caso era decorativa.
+2. `src/telemetry.ts`: `recordEvent` recibía args/outputs/duración completos y persistía solo `{tool, status}` — la evidencia se descartaba al grabarse.
+3. Ninguna ruta mutaba `incidents.status` — **los casos nunca se podían cerrar**.
+4. El endpoint del banco para operadores (`GET /v1/operator/customer`) nunca era llamado por la app.
+
+### Arreglo (implementado)
+
+- Telemetría con payload completo (args, outputs, durationMs verbatim).
+- `caseDetail` poblado: conversación (últimos 50, orden cronológico), eventos (últimos 100 con payloads parseados), intents (estado/reference/operation_id) y operaciones bancarias reales (actor firmante = operador).
+- **Gaps honestos**: sin actividad grabada o fallo del banco se **declara** en `gaps`; JSON malformado se muestra tal cual, nunca se dropea ni se inventa.
+- `POST /api/incidents/:id/close` (operador; 404/409) + botón "Resolve case" en la UI.
+
+### Verificación (after) — CONFIRMADA
+
+- `npm test` → **29/29** (4 tests nuevos: telemetría íntegra; caseDetail poblado con aserción de actor operador; banco caído → gaps sin fabricación; cierre 404/403/200/409).
+- En vivo: caso creado por Lucía (transferencia €1 + request_human) → Marta ve 2 mensajes, 8 eventos con `arguments/output/durationMs`, 9 operaciones bancarias incluida la de €1,00 con su reference → cierra el caso → segundo cierre → 409.
+
+```text
+history: 2 | events: 8 | intents: 1 | bank ops: 9
+sample event data keys: ['tool', 'status', 'arguments', 'output', 'durationMs']
+bank op: {'amountCents': 100, 'status': 'completed', 'reference': 'ba169fdb-...'}
+status: closed
+```
+
+### Nota de demo
+
+Este fix cierra el círculo del video: el mismo caso muestra la propuesta de confirmación en la telemetría (`requires_confirmation` con approvalId), la confirmación, la operación exactly-once y el cierre por el operador — todo con evidencia grabada, no narrada.
