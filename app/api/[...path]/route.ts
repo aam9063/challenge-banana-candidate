@@ -25,6 +25,68 @@ function conversationFor(id: string, userId: string) {
   if (!result) throw new HttpError(404, 'Conversation not found.');
   return result;
 }
+// Approval payloads are stored as JSON text; a malformed row is surfaced
+// as-is instead of being silently dropped or invented (same rule as the
+// operator case view).
+function parseJson(value: unknown) {
+  if (typeof value !== 'string' || value.length === 0) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function pendingApprovalsFor(db: ReturnType<typeof appDb>, conversationId: string, userId: string) {
+  return (
+    db
+      .prepare(
+        `SELECT approvals.id, approvals.intent_id, approvals.expires_at, approvals.payload
+         FROM approvals JOIN intents ON approvals.intent_id=intents.id
+         WHERE intents.conversation_id=? AND approvals.user_id=?
+           AND approvals.consumed_at IS NULL AND approvals.expires_at>?
+         ORDER BY approvals.rowid`,
+      )
+      .all(conversationId, userId, new Date().toISOString()) as any[]
+  ).map((a) => ({
+    id: a.id,
+    intent_id: a.intent_id,
+    expires_at: a.expires_at,
+    payload: parseJson(a.payload),
+  }));
+}
+
+/**
+ * Builds the chat receipt from verified facts only: the bank operation plus
+ * account/contact labels resolved from the bank. If the label lookup fails,
+ * the raw account ids are used — names are never invented.
+ */
+async function receiptContent(userId: string, operation: any): Promise<string> {
+  let fromLabel = String(operation.fromAccountId);
+  let toLabel = String(operation.toAccountId);
+  try {
+    const [accounts, contacts] = await Promise.all([
+      bankRequest<any[]>(userId, '/v1/accounts'),
+      bankRequest<any[]>(userId, '/v1/contacts'),
+    ]);
+    const from = Array.isArray(accounts)
+      ? accounts.find((a) => a.id === operation.fromAccountId)
+      : undefined;
+    if (from?.label) fromLabel = String(from.label);
+    const toContact = Array.isArray(contacts)
+      ? contacts.find((c) => c.id === operation.toAccountId)
+      : undefined;
+    const toAccount = Array.isArray(accounts)
+      ? accounts.find((a) => a.id === operation.toAccountId)
+      : undefined;
+    if (toContact) toLabel = `${toContact.name}'s ${toContact.label}`;
+    else if (toAccount?.label) toLabel = String(toAccount.label);
+  } catch {
+    // Keep the raw account ids; the amounts and reference stay verified.
+  }
+  const amount = (Number(operation.amountCents) / 100).toFixed(2);
+  return `Transfer completed: EUR ${amount} from your ${fromLabel} to ${toLabel} (concept: ${operation.concept}). Reference: ${operation.reference}.`;
+}
 async function handler(request: Request, context: RouteContext) {
   try {
     const { path } = await context.params;
@@ -105,6 +167,7 @@ async function handler(request: Request, context: RouteContext) {
         messages: db
           .prepare('SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at,rowid')
           .all(path[1]),
+        pendingApprovals: pendingApprovalsFor(db, path[1], current.id),
       });
     }
     if (route === 'actions' && request.method === 'POST') {
@@ -147,18 +210,40 @@ async function handler(request: Request, context: RouteContext) {
         .prepare('SELECT * FROM intents WHERE id=? AND user_id=?')
         .get(approval.intent_id, current.id) as any;
       if (!intent) throw new HttpError(404, 'Intent not found.');
-      return json(
-        await transferMoney(
-          {
-            userId: current.id,
-            conversationId: intent.conversation_id,
-            runId: randomUUID(),
-            intentId: intent.id,
-            approvalId: approval.id,
-          },
-          JSON.parse(approval.payload),
-        ),
+      const result = await transferMoney(
+        {
+          userId: current.id,
+          conversationId: intent.conversation_id,
+          runId: randomUUID(),
+          intentId: intent.id,
+          approvalId: approval.id,
+        },
+        JSON.parse(approval.payload),
       );
+      // Close the loop inside the conversation: after a verified completion,
+      // append a receipt built only from the bank-verified operation. Nothing
+      // is appended for non-completed results or on the error paths above.
+      if (
+        result.status === 'completed' &&
+        intent.conversation_id &&
+        result.operation &&
+        typeof (result.operation as any).reference === 'string'
+      ) {
+        try {
+          db.prepare('INSERT INTO messages VALUES(?,?,?,?,?,?)').run(
+            randomUUID(),
+            intent.conversation_id,
+            'assistant',
+            await receiptContent(current.id, result.operation),
+            new Date().toISOString(),
+            null,
+          );
+        } catch (e) {
+          // The transfer completed; a receipt failure must not fail the confirm.
+          console.error('receipt_message_failed', e instanceof Error ? e.name : 'unknown');
+        }
+      }
+      return json(result);
     }
     if (path[0] === 'incidents') {
       if (current.role !== 'operator') throw new HttpError(403, 'Operator role required.');
