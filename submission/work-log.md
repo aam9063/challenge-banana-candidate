@@ -368,7 +368,7 @@ Este fix cierra el círculo del video: el mismo caso muestra la propuesta de con
 
 ### Verificado
 
-- **87 afirmaciones de test** en `npm test` (44 invariantes) + `npm run typecheck` limpio.
+- **44 tests** en `npm test` (todos pasan) + `npm run typecheck` limpio.
 - **Reproducción reproducible del bug crítico**: `scripts/repro-double-debit.ts` (€1,00 → €3,00 antes; €1,00 exacto después).
 - **Eval medido antes/después** (§0c): BEFORE 1/14 pasan · 0/14 citan → AFTER 14/14 pasan · 12/12 de las citas exigidas; 28 respuestas sin ninguna cifra inventada.
 - **Casos sembrados del propio starter** (§0b) re-verificados en vivo tras los arreglos.
