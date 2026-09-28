@@ -137,6 +137,12 @@ async function handler(request: Request, context: RouteContext) {
         .prepare('SELECT * FROM approvals WHERE id=? AND user_id=?')
         .get(path[1], current.id) as any;
       if (!approval) throw new HttpError(404, 'Proposal not found.');
+      // Early checks give clean errors even when the intent is already
+      // completed (the intent gate would otherwise return the stored result).
+      if (approval.consumed_at)
+        throw new HttpError(409, 'This proposal was already confirmed.');
+      if (approval.expires_at <= new Date().toISOString())
+        throw new HttpError(410, 'This proposal has expired; request the transfer again.');
       const intent = db
         .prepare('SELECT * FROM intents WHERE id=? AND user_id=?')
         .get(approval.intent_id, current.id) as any;

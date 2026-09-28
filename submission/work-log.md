@@ -8,6 +8,8 @@
 
 1. [Setup y diagnóstico de instalación](#1-setup-y-diagnóstico-de-instalación)
 2. [Bug 1: Doble débito en reintentos de transferencia](#2-bug-1-doble-débito-en-reintentos-de-transferencia)
+3. [Bug 2: Documentación caducada en las respuestas](#3-bug-2-documentación-caducada-en-las-respuestas-del-asistente)
+4. [Parte 2: Trust Layer](#4-parte-2--trust-layer-feature-distintiva)
 
 ---
 
@@ -149,3 +151,42 @@ Cero resultados `archive-*`; todos los chunks con versión y vigencia pobladas (
 El filtro de vigencia aplica también al rol operador. La biblioteca de documentos (`GET /api/documents`) sigue mostrando TODO el corpus incluidos históricos; solo la *búsqueda que alimenta respuestas* usa exclusivamente documentos vigentes. Si se quisiera que los operadores busquen versiones históricas, sería una decisión de producto aparte.
 
 ---
+
+---
+
+## 4. Parte 2 — Trust Layer (feature distintiva)
+
+**Fecha**: 28-09-2026 · **Estado**: IMPLEMENTADA · **Rama**: `feature/trust-layer` (commits `1b1099a` + `53d3333`)
+
+### La idea
+
+Una capa de confianza sobre el asistente que cubre dos contratos incumplidos a la vez:
+
+1. **Confirmation cards**: el agente NUNCA mueve dinero sin revisión explícita — crea una propuesta (monto/origen/destino) que expira en 10 minutos, el cliente la confirma en el panel "Proposals awaiting confirmation", y solo entonces se despacha con garantías exactly-once. Recibo con `reference` verificable vía `operation_status`.
+2. **Respuestas con citas verificables**: cada afirmación de política/tarifa/límite lleva cita `[docId vN]` renderizada como chip clicable que abre el documento citado en la biblioteca. Sin evidencia → se admite y se ofrece siguiente paso. Prohibido inventar tarifas o "prácticas bancarias típicas".
+
+### Por qué es distintiva
+
+- No es un chatbot genérico: **cada respuesta es auditable** (cita → documento → versión → vigencia) y **cada operación es reversible-a-la-vista** (propuesta → confirmación → recibo).
+- Compone todo lo anterior: docs vigentes (Bug 2), intents exactly-once (Bug 1) y ahora la revisión explícita — la demo encadena los tres.
+
+### Implementación
+
+**Backend (`1b1099a`)** — `src/banking/authorization.ts` + `app/api/[...path]/route.ts`:
+- `authorizeTransfer` sin `approvalId` → crea/reusa propuesta pendiente por intent (TTL 10 min) y devuelve `requires_confirmation` **sin despachar**.
+- Camino confirm → valida 404/409-consumida/410-expirada/409-payload-alturada y consume **atómicamente** (`UPDATE ... WHERE consumed_at IS NULL` + `changes===1`).
+- 5 tests TDD nuevos; los tests exactly-once anteriores actualizados para pasar por la confirmación (garantías intactas). **25/25 tests**.
+
+**Agente + UI (`53d3333`)** — `src/agent/prompt.ts` + `src/agent/run.ts` + `app/page.tsx`:
+- Postura evidence-first: fuentes vigentes > conocimiento de fondo; citas obligatorias; sin evidencia → admitirlo + siguiente paso (`request_human` / sección Documents).
+- Transferencia `requires_confirmation` → el agente explica que **no** se ejecutó y pide confirmar en el panel.
+- Chips de cita accesibles (aria-label) que abren el documento citado.
+
+### Demo script para el video (guión sugerido)
+
+1. **Cita verificable**: "What is the monthly fee of the Aurora account and when is it waived?" → respuesta con chip `[aurora-fees-2026 v2]` → click → abre el documento en la biblioteca. (Verificado: la respuesta cita condiciones exactas — €6/mes, exención con salario ≥€1.200 + 3 compras.)
+2. **Sin invención**: "Can I transfer 999 million euros?" → cita el límite documentado en vez de inventarlo (`[aurora-operations-2026 v2]`).
+3. **Confirmación explícita**: "Send 1 euro from my Aurora account to Bruno, concept coffee" → el agente muestra la propuesta y aclara que NO se ejecutó → panel "Proposals awaiting confirmation" → Confirm → recibo con reference.
+4. **Double-confirm bloqueado**: segundo click en Confirm → 409 "This proposal was already confirmed."
+5. **Exactly-once bajo fallo**: con `npm run scenario -- lost-response`, repetir el flujo → exactamente €1 debitado (`scripts/repro-double-debit.ts` imprime "No double debit observed").
+6. **Cierre**: saldos consistentes entre UI y banco en todo momento.
