@@ -262,6 +262,42 @@ test('search keeps only documents in force at the reference date', async () => {
   assert.equal(results[0].version, 1);
 });
 
+test('knowledge instructions require citations and forbid invented answers', async () => {
+  const { knowledgeInstructions } = await import('../src/agent/prompt');
+  const sources: (Chunk & { score: number })[] = [
+    {
+      id: 'chunk-1',
+      documentId: 'aurora-fees',
+      text: 'The Aurora monthly fee is waived when the balance stays above 500 euros.',
+      title: 'Aurora · fees',
+      version: 2,
+      validFrom: '2026-01-01',
+      validTo: null,
+      audience: 'public',
+      score: 0.9,
+    },
+  ];
+  const instructions = knowledgeInstructions(sources);
+  // Citations are mandatory for policy claims, with the token format the UI renders.
+  assert.match(instructions, /\[documentId vVersion\]/);
+  assert.match(instructions, /citation/i);
+  assert.match(instructions, /every factual claim/i);
+  // Gap filling with banking folklore is gone.
+  assert.doesNotMatch(instructions, /common banking practices/i);
+  assert.doesNotMatch(instructions, /concrete estimate/i);
+  assert.match(instructions, /[Nn]ever invent/);
+  assert.match(instructions, /no applicable documentation/i);
+  // Sources must carry version and validity metadata so citations stay accurate.
+  assert.match(instructions, /"validFrom":"2026-01-01"/);
+  assert.match(instructions, /"version":2/);
+  // In-force sources take precedence over background knowledge.
+  assert.match(instructions, /reference date/);
+  assert.match(instructions, /[Pp]recedence|[Pp]referred/);
+  // Pending transfers must be described as proposals, never as executed operations.
+  assert.match(instructions, /requires_confirmation/);
+  assert.match(instructions, /NOT been executed/i);
+});
+
 test('search without an API key returns actionable configuration guidance', async () => {
   seedApp();
   const previousKey = process.env.OPENAI_API_KEY;

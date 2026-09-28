@@ -237,6 +237,18 @@ export default function Home() {
       if (g === generation.current) setError((e as Error).message);
     }
   }
+  async function openCitation(docId: string) {
+    if (!docs.length) return; // Library not loaded yet: the chip stays non-navigating.
+    setTab('documents');
+    if (!docs.some((d) => d.id === docId)) return;
+    const g = generation.current;
+    try {
+      const result = await api(`documents/${docId}`);
+      if (g === generation.current) setDocument(result);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
   async function submitTransfer() {
     const g = generation.current;
     setBusy(true);
@@ -571,15 +583,44 @@ export default function Home() {
                           {m.role === 'assistant' && <span className="message-avatar">✧</span>}
                           <div className="bubble">
                             <div>
-                              {String(m.content)
-                                .split(/(\*\*[^*]+\*\*)/g)
-                                .map((part, j) =>
-                                  part.startsWith('**') && part.endsWith('**') ? (
-                                    <strong key={j}>{part.slice(2, -2)}</strong>
-                                  ) : (
-                                    part
-                                  ),
-                                )}
+                              {m.role === 'assistant'
+                                ? String(m.content)
+                                    .split(
+                                      /(\*\*[^*]+\*\*|\[[A-Za-z0-9][A-Za-z0-9._-]* v\d+\])/g,
+                                    )
+                                    .map((part, j) => {
+                                      if (part.startsWith('**') && part.endsWith('**'))
+                                        return <strong key={j}>{part.slice(2, -2)}</strong>;
+                                      const citation = part.match(
+                                        /^\[([A-Za-z0-9][A-Za-z0-9._-]*) v(\d+)\]$/,
+                                      );
+                                      if (citation)
+                                        return (
+                                          <button
+                                            key={j}
+                                            className="subtle-tag"
+                                            style={{
+                                              display: 'inline-block',
+                                              margin: '2px 3px',
+                                            }}
+                                            title={`${citation[1]} · v${citation[2]}`}
+                                            aria-label={`Open source document ${citation[1]}, version ${citation[2]}`}
+                                            onClick={() => openCitation(citation[1])}
+                                          >
+                                            {citation[1]} · v{citation[2]}
+                                          </button>
+                                        );
+                                      return part;
+                                    })
+                                : String(m.content)
+                                    .split(/(\*\*[^*]+\*\*)/g)
+                                    .map((part, j) =>
+                                      part.startsWith('**') && part.endsWith('**') ? (
+                                        <strong key={j}>{part.slice(2, -2)}</strong>
+                                      ) : (
+                                        part
+                                      ),
+                                    )}
                             </div>
                             <small>{date(m.created_at)}</small>
                           </div>
