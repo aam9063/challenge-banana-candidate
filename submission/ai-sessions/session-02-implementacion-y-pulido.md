@@ -162,6 +162,14 @@ DOUBLE DEBIT CONFIRMED: one €1.00 intention debited €3.00.
 
 ---
 
+## Fase 8 — El descarte también queda registrado en la conversación
+
+**Contexto**: el usuario señaló que, si al confirmar aparece un recibo en el chat, al descartar debería aparecer también un mensaje ("en el chat debería aparecer un mensaje como aparece en transfers").
+
+**Implementación**: `cancellationContent` construido **solo con el payload almacenado** (una propuesta cancelada no tiene operación bancaria, así que no se afirma ninguna) y resolvedor de etiquetas compartido con el recibo (`transferLabels`, fallback a ids, nunca inventado). El mensaje se añade **exactamente una vez**: solo tras el `UPDATE` guardado exitoso (`changes === 1`), solo si el intent tiene conversación, nunca en 404/409 ni en el re-cancel idempotente; el INSERT va envuelto para que un fallo de mensaje jamás rompa la cancelación.
+
+**Verificación**: 3 tests nuevos con TDD (RED observado) → **40/40**; en vivo: doble cancel → **un solo** mensaje *"Transfer cancelled: EUR 4.50 from your Aurora account to Bruno Vidal's Horizon account (concept: parent cancel msg) was not sent. No money has moved."* y `pendingApprovals` a 0.
+
 ## Decisiones transversales y su porqué
 
 | Decisión | Porqué |
@@ -177,5 +185,5 @@ Arreglar los bugs que la infraestructura dormida insinuaba (aprobaciones, operad
 
 1. ~~Verificar y commitear la Fase 7 (cancelación real del Discard)~~ — hecho: `npm test` 37/37, cancelación verificada en vivo (desaparece de chat+dashboard, confirm posterior 409 sin débito), commit `fcd0405`.
 2. Revisar la UI completa con el usuario y aplicar mejoras de layout si hacen falta.
-3. Grabar el video (guión de 6 pasos en `submission/work-log.md` §4).
+3. Grabar el video (guión de 6 pasos en `submission/work-log.md` §4) — el guión debería incluir ahora el descarte registrado en el chat.
 4. Mergear la cadena de ramas a `dev` en orden y empaquetar el ZIP de entrega.

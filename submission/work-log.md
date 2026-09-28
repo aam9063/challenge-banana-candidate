@@ -210,6 +210,8 @@ Verificado: 3 tests nuevos (32/32), ciclo en vivo por API (propuesta → `pendin
 
 Verificado en vivo: cancelar → desaparece de ambos lados; re-cancelar idempotente; confirmar la cancelada → 409 sin débito (saldo intacto); 5 tests nuevos (**37/37**).
 
+**Cuarta iteración (commit `6f2c0ba`)**: el descarte debía quedar también registrado en el chat (como el recibo de la confirmación). Se añade un mensaje de cancelación construido solo con el payload almacenado — *"Transfer cancelled: EUR 4.50 from your Aurora account to Bruno Vidal's Horizon account (concept: parent cancel msg) was not sent. No money has moved."* — exactamente una vez por cancelación (sin duplicados en re-cancel), con etiquetas resueltas del banco y fallback a ids. 3 tests nuevos (**40/40**).
+
 ### Demo script para el video (guión sugerido)
 
 1. **Cita verificable**: "What is the monthly fee of the Aurora account and when is it waived?" → respuesta con chip `[aurora-fees-2026 v2]` → click → abre el documento en la biblioteca. (Verificado: la respuesta cita condiciones exactas — €6/mes, exención con salario ≥€1.200 + 3 compras.)
