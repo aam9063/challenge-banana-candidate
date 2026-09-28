@@ -201,6 +201,15 @@ Esto también es material de video: muestra el ciclo completo **feedback real �
 
 Verificado: 3 tests nuevos (32/32), ciclo en vivo por API (propuesta → `pendingApprovals` → confirm → recibo con reference → segundo confirm 409 sin mensaje extra).
 
+**Tercera iteración (mismo día, commit `e6d1f4c`)**: al probar "Discard", el usuario reportó que la propuesta seguía apareciendo para confirmar, incluso fuera de la conversación. Causa: Discard era cosmético (ocultaba la tarjeta localmente) y la propuesta seguía viva en el servidor — la tabla `approvals` no tenía estado de cancelación. Arreglo:
+
+- Columna `cancelled_at` en `approvals` con **migración idempotente** (`PRAGMA table_info` + `ALTER TABLE` guardado) para bases existentes.
+- `POST /api/approvals/:id/cancel`: cancelación atómica (`UPDATE ... WHERE consumed_at IS NULL AND cancelled_at IS NULL`) e idempotente; 409 si ya fue confirmada; 404 para propuestas ajenas.
+- Filtros `cancelled_at IS NULL` en dashboard, `pendingApprovals` de la conversación y en el confirm (que ahora responde con mensaje claro y **sin ejecutar nada**).
+- UI: Discard llama al endpoint, avisa "Proposal discarded. The transfer was not sent." y refresca panel + conversación.
+
+Verificado en vivo: cancelar → desaparece de ambos lados; re-cancelar idempotente; confirmar la cancelada → 409 sin débito (saldo intacto); 5 tests nuevos (**37/37**).
+
 ### Demo script para el video (guión sugerido)
 
 1. **Cita verificable**: "What is the monthly fee of the Aurora account and when is it waived?" → respuesta con chip `[aurora-fees-2026 v2]` → click → abre el documento en la biblioteca. (Verificado: la respuesta cita condiciones exactas — €6/mes, exención con salario ≥€1.200 + 3 compras.)
