@@ -10,7 +10,9 @@ export function recordEvent(ctx: ToolContext, kind: string, data: Record<string,
       ctx.userId,
       ctx.conversationId,
       kind,
-      JSON.stringify({ tool: data.tool, status: data.status }),
+      // Persist the full payload: tool arguments, outputs and durationMs are
+      // the operator's evidence and must survive verbatim.
+      JSON.stringify(data),
       new Date().toISOString(),
     );
 }

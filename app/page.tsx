@@ -113,6 +113,26 @@ export default function Home() {
     if (data.accounts?.length)
       setFrom((v) => (data.accounts.some((a: AnyRecord) => a.id === v) ? v : data.accounts[0].id));
   }
+  async function resolveCase() {
+    if (!selectedCase) return;
+    setBusy(true);
+    setError('');
+    try {
+      await api(`incidents/${selectedCase.incident.id}/close`, {});
+      const g = generation.current;
+      const [detail, dash] = await Promise.all([
+        api(`incidents/${selectedCase.incident.id}`),
+        api('dashboard'),
+      ]);
+      if (g !== generation.current) return;
+      setSelectedCase(detail);
+      setDashboard(dash);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
   async function selectPerson(id: string) {
     const g = ++generation.current;
     setCurrent(null);
@@ -842,6 +862,11 @@ export default function Home() {
                               ? 'Resolved'
                               : 'Awaiting support'}
                           </span>
+                          {selectedCase.incident.status !== 'closed' && (
+                            <button className="primary-button" disabled={busy} onClick={resolveCase}>
+                              Resolve case
+                            </button>
+                          )}
                           <h3>Latest message</h3>
                           <blockquote>{selectedCase.lastMessage?.content}</blockquote>
                           <p className="muted">Received {date(selectedCase.incident.created_at)}</p>
