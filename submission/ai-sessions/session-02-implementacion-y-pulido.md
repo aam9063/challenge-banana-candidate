@@ -175,7 +175,7 @@ Arreglar los bugs que la infraestructura dormida insinuaba (aprobaciones, operad
 
 ## Pendientes al cierre de esta entrada
 
-1. ~~Verificar y commitear la Fase 7 (cancelación real del Discard)~~ — hecho: `npm test` 37/37, cancelación verificada en vivo (desaparece de chat+dashboard, confirm posterior 409 sin débito), commit `e6d1f4c`.
+1. ~~Verificar y commitear la Fase 7 (cancelación real del Discard)~~ — hecho: `npm test` 37/37, cancelación verificada en vivo (desaparece de chat+dashboard, confirm posterior 409 sin débito), commit `fcd0405`.
 2. Revisar la UI completa con el usuario y aplicar mejoras de layout si hacen falta.
 3. Grabar el video (guión de 6 pasos en `submission/work-log.md` §4).
 4. Mergear la cadena de ramas a `dev` en orden y empaquetar el ZIP de entrega.
