@@ -192,6 +192,16 @@ DOUBLE DEBIT CONFIRMED: one €1.00 intention debited €3.00.
 
 **Lección de método registrada**: los smoke tests no deben contaminar los datos de demo; hay que limpiar las propuestas pendientes al terminar cada verificación (y evitar dejar conversaciones vacías).
 
+## Fase 11 — Medición antes/después (eval de respuestas) y evidencia del starter
+
+**Trabajo**: (1) mapa explícito **cláusula de `contracts.md` → bug → reproducción → arreglo → verificación** en el work-log, incluyendo las dos cláusulas que ya se cumplían (verificadas para descartarlas); (2) documentación de los **casos sembrados** del starter como evidencia propia, verificados en vivo; (3) **eval medido** con `scripts/eval-answers.ts` (7 preguntas con verdad de referencia y trampa de valores prohibidos, 2 repeticiones por lado, base `db0bdf5` en puertos 3010/4011 vía worktree desechable).
+
+**Resultado**: BEFORE 1/14 pasan y 0/14 citan; AFTER **14/14 pasan y 12/12 de las citas exigidas**. Lectura honesta: el delta es **trazabilidad**, no acierto factual (el base acertó los hechos en las 14 respuestas). Ninguna de las 28 respuestas inventó cifras.
+
+**Verificación de los casos sembrados (en vivo, after)**: Elena ya no responde "Transfer completed" ante una pregunta informativa (explica qué revisar y aclara que no ha enviado nada, con 0 propuestas creadas); Inés ya no inventa "EUR 30" por referidos (admite que no hay documentación aplicable y ofrece dos siguientes pasos).
+
+**Límites declarados**: el instrumento puntúa por presencia/ausencia de cifras (posible falso negativo ante respuestas comparativas; sesgo en contra de nuestra medición); y el arreglo no recupera valores archivados para preguntas históricas — verificado que en ese caso admite el hueco y ofrece soporte, sin inventar.
+
 ## Decisiones transversales y su porqué
 
 | Decisión | Porqué |

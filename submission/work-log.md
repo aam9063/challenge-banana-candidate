@@ -8,6 +8,7 @@
 
 0. [Mapa contrato → bug → arreglo → evidencia](#0-mapa-contrato--bug--arreglo--evidencia)
 0b. [Evidencia del starter: casos sembrados](#0b-evidencia-del-starter-casos-sembrados)
+0c. [Medición antes/después (eval)](#0c-medición-antesdespués-eval-de-respuestas)
 1. [Setup y diagnóstico de instalación](#1-setup-y-diagnóstico-de-instalación)
 2. [Bug 1: Doble débito en reintentos de transferencia](#2-bug-1-doble-débito-en-reintentos-de-transferencia)
 3. [Bug 2: Documentación caducada en las respuestas](#3-bug-2-documentación-caducada-en-las-respuestas-del-asistente)
@@ -62,6 +63,34 @@ Preguntados tal cual están sembrados, con el código arreglado:
 > I couldn't find applicable documentation stating how much a referral reward pays. You can check the Documents section in the app, or I can open a support case to ask about the current referral offer.
 
 → Admite la falta de evidencia y ofrece dos siguientes pasos concretos (documentación o caso de soporte); antes inventaba "EUR 30".
+
+---
+
+## 0c. Medición antes/después (eval de respuestas)
+
+Instrumento: `scripts/eval-answers.ts` — 7 preguntas con verdad de referencia del corpus, cada una en una conversación nueva, puntuando tres criterios: **hecho correcto**, **hecho prohibido ausente** (la trampa del archivo) y **cita `[docId vN]`**. `REPEATS=2` → 14 turnos por lado. Evidencia cruda: `submission/evidence/eval-before-r2.json` y `eval-after-r2.json`.
+
+- **BEFORE**: commit base `db0bdf5`, servidor propio en puertos 3010/4011 (worktree desechable, ya eliminado).
+- **AFTER**: la rama con los arreglos, servidor en 3000.
+
+| # | Pregunta | Verdad | Trampa | BEFORE | AFTER |
+|---|---|---|---|---|---|
+| 1 | Comisión Aurora | EUR 6 | EUR 8 (archivado) | 0/2 · sin cita | **2/2 · citado** (`aurora-fees-2026 v2`) |
+| 2 | Comisión Horizon | EUR 3 | 6/8 de Aurora | 0/2 · sin cita | **2/2 · citado** (`horizon-fees-2026 v2`) |
+| 3 | Recompensa por referidos | no documentado | EUR 30 inventado | 1/2 · sin cita | **2/2** (cita no exigida) |
+| 4 | Límite por transferencia | EUR 100.000 | — | 0/2 · sin cita | **2/2 · citado** (`aurora-operations-2026 v2`) |
+| 5 | Comisión Cloud | EUR 0 | 2/5/6 | 0/2 · sin cita | **2/2 · citado** |
+| 6 | Comisión Community | EUR 2 | 0/5/6 | 0/2 · sin cita | **2/2 · citado** |
+| 7 | Comisión Family | EUR 5 | 0/2/6 | 0/2 · sin cita | **2/2 · citado** |
+| | **Total** | | | **1/14 pasan · 0/14 citan** | **14/14 pasan · 12/14 citan (12/12 de las exigidas)** |
+
+### Lectura honesta del resultado
+
+- **El delta medido es trazabilidad, no acierto factual.** El código base respondió correctamente los 7 hechos en ambas repeticiones; lo que cambia con el arreglo es el **grounding**: 0/12 turnos citaban antes → 12/12 citan con el `docId` y la versión correctos después. Es exactamente la cláusula *"make its evidence traceable"*.
+- **El 1/14 del base no es un fallo del agente base** en su totalidad: 13 turnos fallan por la exigencia de cita (y 1 de ellos por paráfrasis: el base dijo *"couldn't verify a referral reward"* y la regex solo contemplaba *"couldn't find"*). Se registra para no sobreinterpretar el número.
+- **Sin invención en ninguna de las 28 respuestas**: ni EUR 8 como comisión vigente, ni recompensa de referidos, ni comisiones cruzadas entre productos.
+- **Límites del instrumento (declarados)**: puntúa por presencia/ausencia de cifras, así que una respuesta que *compare* productos (p.ej. "Horizon cuesta EUR 3, no EUR 6 como Aurora") contaría el 6 como prohibido y daría un falso negativo. No ocurrió en ninguna de las 28 respuestas, y el sesgo —de existir— es **en contra** de nuestra medición, nunca a favor.
+- **Límite conocido del arreglo**: las preguntas genuinamente históricas no recuperan el valor archivado (los documentos caducados están fuera de la búsqueda que alimenta respuestas; siguen visibles en la biblioteca). Verificado en vivo: *"What was the Aurora account monthly fee before September 2026?"* → el asistente admite que no tiene documentación aplicable, cita el aviso vigente `[notice-aurora v2]` y ofrece consultar el archivo vía soporte — **no inventa el EUR 8**.
 
 ---
 
