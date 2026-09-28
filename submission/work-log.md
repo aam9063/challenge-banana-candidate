@@ -47,6 +47,22 @@ Las cláusulas de negocio de `docs/contracts.md` y el defecto correspondiente en
 
 Con los arreglos, estos mismos casos cambian de comportamiento: Elena recibe una propuesta a confirmar (no un "completed" falso), Inés escucha que no hay documentación aplicable y se le ofrece un siguiente paso, Carla recibe la comisión **con cita y versión**, y Diego/Lucía obtienen un estado verificado contra el banco.
 
+### Verificación en vivo de los casos sembrados (after)
+
+Preguntados tal cual están sembrados, con el código arreglado:
+
+**Elena** — *"Before deciding whether to send EUR 25 to Hugo, what would I need to review?"*
+
+> Review the source account and available balance, confirm that Hugo is the intended recipient, and check the transfer details before deciding. **I haven't sent anything.**
+
+→ Cero propuestas creadas: una pregunta informativa ya no "ejecuta" nada, y el asistente declara explícitamente que no ha enviado nada (antes respondía "Transfer completed.").
+
+**Inés** — *"How much money do I get for referring a friend to the bank?"*
+
+> I couldn't find applicable documentation stating how much a referral reward pays. You can check the Documents section in the app, or I can open a support case to ask about the current referral offer.
+
+→ Admite la falta de evidencia y ofrece dos siguientes pasos concretos (documentación o caso de soporte); antes inventaba "EUR 30".
+
 ---
 
 ## 1. Setup y diagnóstico de instalación
