@@ -58,35 +58,62 @@ function pendingApprovalsFor(db: ReturnType<typeof appDb>, conversationId: strin
 }
 
 /**
- * Builds the chat receipt from verified facts only: the bank operation plus
- * account/contact labels resolved from the bank. If the label lookup fails,
- * the raw account ids are used — names are never invented.
+ * Resolves account/contact labels from the bank for a transfer pair. If the
+ * label lookup fails, the raw account ids are used — names are never invented.
  */
-async function receiptContent(userId: string, operation: any): Promise<string> {
-  let fromLabel = String(operation.fromAccountId);
-  let toLabel = String(operation.toAccountId);
+async function transferLabels(userId: string, fromAccountId: unknown, toAccountId: unknown) {
+  let fromLabel = String(fromAccountId);
+  let toLabel = String(toAccountId);
   try {
     const [accounts, contacts] = await Promise.all([
       bankRequest<any[]>(userId, '/v1/accounts'),
       bankRequest<any[]>(userId, '/v1/contacts'),
     ]);
     const from = Array.isArray(accounts)
-      ? accounts.find((a) => a.id === operation.fromAccountId)
+      ? accounts.find((a) => a.id === fromAccountId)
       : undefined;
     if (from?.label) fromLabel = String(from.label);
     const toContact = Array.isArray(contacts)
-      ? contacts.find((c) => c.id === operation.toAccountId)
+      ? contacts.find((c) => c.id === toAccountId)
       : undefined;
     const toAccount = Array.isArray(accounts)
-      ? accounts.find((a) => a.id === operation.toAccountId)
+      ? accounts.find((a) => a.id === toAccountId)
       : undefined;
     if (toContact) toLabel = `${toContact.name}'s ${toContact.label}`;
     else if (toAccount?.label) toLabel = String(toAccount.label);
   } catch {
     // Keep the raw account ids; the amounts and reference stay verified.
   }
+  return { fromLabel, toLabel };
+}
+
+/**
+ * Builds the chat receipt from verified facts only: the bank operation plus
+ * resolved account/contact labels.
+ */
+async function receiptContent(userId: string, operation: any): Promise<string> {
+  const { fromLabel, toLabel } = await transferLabels(
+    userId,
+    operation.fromAccountId,
+    operation.toAccountId,
+  );
   const amount = (Number(operation.amountCents) / 100).toFixed(2);
   return `Transfer completed: EUR ${amount} from your ${fromLabel} to ${toLabel} (concept: ${operation.concept}). Reference: ${operation.reference}.`;
+}
+
+/**
+ * Builds the cancellation notice from the stored proposal payload plus
+ * resolved labels only. A cancelled proposal never reached the bank, so there
+ * is no bank operation and the message must never claim one.
+ */
+async function cancellationContent(userId: string, payload: any): Promise<string> {
+  const { fromLabel, toLabel } = await transferLabels(
+    userId,
+    payload?.fromAccountId,
+    payload?.toAccountId,
+  );
+  const amount = (Number(payload?.amountCents) / 100).toFixed(2);
+  return `Transfer cancelled: EUR ${amount} from your ${fromLabel} to ${toLabel} (concept: ${payload?.concept}) was not sent. No money has moved.`;
 }
 async function handler(request: Request, context: RouteContext) {
   try {
@@ -267,6 +294,29 @@ async function handler(request: Request, context: RouteContext) {
         .run(new Date().toISOString(), path[1], current.id);
       if (cancelled.changes !== 1)
         throw new HttpError(409, 'This proposal was already confirmed and cannot be cancelled.');
+      // Close the loop inside the conversation: record what happened so the
+      // chat reflects the cancellation, exactly like confirming appends a
+      // receipt. Appended only once, on the first successful cancel, and only
+      // when the intent belongs to a conversation. Built from the stored
+      // payload — there is no bank operation for a cancelled proposal.
+      try {
+        const intent = db
+          .prepare('SELECT * FROM intents WHERE id=? AND user_id=?')
+          .get(approval.intent_id, current.id) as any;
+        if (intent?.conversation_id) {
+          db.prepare('INSERT INTO messages VALUES(?,?,?,?,?,?)').run(
+            randomUUID(),
+            intent.conversation_id,
+            'assistant',
+            await cancellationContent(current.id, parseJson(approval.payload)),
+            new Date().toISOString(),
+            null,
+          );
+        }
+      } catch (e) {
+        // The cancellation succeeded; a message failure must not fail it.
+        console.error('cancel_message_failed', e instanceof Error ? e.name : 'unknown');
+      }
       return json({ status: 'cancelled' });
     }
     if (path[0] === 'incidents') {

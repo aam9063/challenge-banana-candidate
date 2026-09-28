@@ -884,6 +884,97 @@ test('the receipt falls back to account ids when the bank label lookup fails', a
   }
 });
 
+// --- Cancellation loop closure: a discarded proposal leaves a chat message ---
+const cancelCount = (conversationId: string) =>
+  (
+    appDb()
+      .prepare(
+        "SELECT COUNT(*) n FROM messages WHERE conversation_id=? AND role='assistant' AND content LIKE 'Transfer cancelled:%'",
+      )
+      .get(conversationId) as { n: number }
+  ).n;
+
+test('cancelling from a conversation appends exactly one cancellation message; re-cancelling appends nothing', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  const conversationId = 'conv-cancel-message';
+  createConversation(conversationId, 'Cancel message');
+  const proposal = await conversationProposal(conversationId, 'intent-cancel-message');
+  assert.equal(cancelCount(conversationId), 0);
+
+  const first = await cancelResponse(proposal.approvalId);
+  assert.equal(first.status, 200);
+  const after = await (await conversationResponse(conversationId)).json();
+  const last = (after.messages as any[]).at(-1);
+  assert.equal(last.role, 'assistant');
+  // Labels come from the bank's records; the message is built only from the
+  // stored payload, never from a bank operation (none exists for a cancel).
+  assert.equal(
+    last.content,
+    `Transfer cancelled: EUR 10.00 from your Everyday to Bruno Vidal's Horizon (concept: Test) was not sent. No money has moved.`,
+  );
+  assert.equal(cancelCount(conversationId), 1);
+  assert.deepEqual(after.pendingApprovals, []);
+
+  // The idempotent re-cancel must not append a duplicate message.
+  const second = await cancelResponse(proposal.approvalId);
+  assert.equal(second.status, 200);
+  assert.equal(cancelCount(conversationId), 1);
+  const afterSecond = await (await conversationResponse(conversationId)).json();
+  assert.equal((afterSecond.messages as any[]).at(-1).id, last.id);
+});
+
+test('cancelling an approval whose intent has no conversation appends no message and still succeeds', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  const totalCancellations = () =>
+    (
+      appDb()
+        .prepare(
+          "SELECT COUNT(*) n FROM messages WHERE role='assistant' AND content LIKE 'Transfer cancelled:%'",
+        )
+        .get() as { n: number }
+    ).n;
+  const before = totalCancellations();
+  const proposal = (await transferMoney(transferContext('intent-cancel-no-conv'), input)) as any;
+  assert.equal(proposal.status, 'requires_confirmation');
+  assert.equal(intentRow('intent-cancel-no-conv').conversation_id, null);
+
+  const response = await cancelResponse(proposal.approvalId);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { status: 'cancelled' });
+  assert.equal(totalCancellations(), before);
+});
+
+test('the cancellation message falls back to account ids when the label lookup fails', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  fakeBank.behavior.contacts = () => ({ status: 503 });
+  try {
+    const conversationId = 'conv-cancel-fallback';
+    createConversation(conversationId, 'Cancel fallback');
+    const proposal = await conversationProposal(conversationId, 'intent-cancel-fb');
+    const response = await cancelResponse(proposal.approvalId);
+    assert.equal(response.status, 200);
+    const after = await (await conversationResponse(conversationId)).json();
+    const last = (after.messages as any[]).at(-1);
+    assert.equal(
+      last.content,
+      'Transfer cancelled: EUR 10.00 from your acc-lucia to acc-bruno (concept: Test) was not sent. No money has moved.',
+    );
+    // No invented names when the lookup fails.
+    assert.doesNotMatch(last.content, /Everyday|Bruno Vidal|Horizon/);
+  } finally {
+    fakeBank.behavior.contacts = null;
+  }
+});
+
 // --- Operator visibility: telemetry, case detail, case closure ---
 const insertMessage = (
   id: string,
