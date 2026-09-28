@@ -109,3 +109,43 @@ No double debit observed (fixed?).
 **Before/after**: €1,00 de intención → €3,00 debitados y estados engañosos **antes**; €1,00 debitado exactamente una vez, reintento sin efectos adicionales y estado siempre verificado **después**.
 
 ---
+
+## 3. Bug 2: Documentación caducada en las respuestas del asistente
+
+**Fecha**: 28-09-2026 · **Severidad**: alta (evidencia trazable) · **Estado**: RESUELTO · **Rama**: `fix/stale-doc-retrieval`
+
+### El problema
+
+El contrato exige: *"Assistant information should rely on applicable documentation and make its evidence traceable"* y avisa que *"Documents can contain historical versions"*. El corpus incluye 80 documentos con versiones históricas y archivados (`archive-*`, vigentes hasta 2026-08-31), y la fecha de referencia del ejercicio es **2026-09-24** (`src/config.ts:18`).
+
+### Causa raíz (lectura de código)
+
+1. `src/ingestion/chunker.ts:13-16`: `title/version/validFrom/validTo` solo se rellenaban en el chunk de offset 0; el resto quedaban en `null` → la UI mostraba "Version —" y el filtrado por vigencia por chunk era imposible.
+2. `src/retrieval/search.ts:18`: solo filtraba por audiencia (`public`/operador). Documentos archivados y sustituidos competían en el ranking con la política vigente → el asistente podía responder con comisiones/reglas caducadas.
+
+### Arreglo (implementado)
+
+1. `chunker.ts`: metadatos del documento propagados a **todos** los chunks. El id del chunk es `sha256(docId:offset:text)` (sin metadatos) → ids estables, el cache de embeddings sigue funcionando (re-ingesta sin coste de API).
+2. `search.ts`: filtro de vigencia sobre `referenceDate` con límites inclusivos y `null` = abierto (`validFrom <= ref && (validTo == null || validTo >= ref)`), encima del filtro de audiencia. Formato uniforme `YYYY-MM-DD` en todo el corpus (verificado) → comparación lexicográfica exacta.
+3. Re-ingesta + export del índice portable (356 chunks, todos con metadatos completos).
+
+### Verificación (after) — CONFIRMADA
+
+- `npm test` → **19/19** (2 tests nuevos: propagación de metadatos; doc caducado con score 1.0 excluido aunque ganaría el ranking, vector sintético cacheado → cero llamadas de API).
+- Búsqueda en vivo `POST /api/search {"query":"Aurora account fees"}` (cliente):
+
+```text
+aurora-fees-2026        | v2 2026-09-01 -> None | 0.688
+aurora-operations-2026  | v2 2026-09-01 -> None | 0.627
+faq-aurora-waiver       | v2 2026-09-01 -> None | 0.621
+aurora-conditions-2026  | v2 2026-09-01 -> None | 0.605
+aurora-fees-2026        | v2 2026-09-01 -> None | 0.576
+```
+
+Cero resultados `archive-*`; todos los chunks con versión y vigencia pobladas (`GET /api/documents/:id/chunks`).
+
+### Nota de diseño
+
+El filtro de vigencia aplica también al rol operador. La biblioteca de documentos (`GET /api/documents`) sigue mostrando TODO el corpus incluidos históricos; solo la *búsqueda que alimenta respuestas* usa exclusivamente documentos vigentes. Si se quisiera que los operadores busquen versiones históricas, sería una decisión de producto aparte.
+
+---
