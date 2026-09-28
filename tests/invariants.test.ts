@@ -298,6 +298,17 @@ test('knowledge instructions require citations and forbid invented answers', asy
   // Pending transfers must be described as proposals, never as executed operations.
   assert.match(instructions, /requires_confirmation/);
   assert.match(instructions, /NOT been executed/i);
+  // A complete transfer request must produce a real tool call in the same turn,
+  // never a prose-only 'proposal' asking the customer to confirm nothing.
+  assert.match(instructions, /MUST call the transfer_money tool in that same turn/i);
+  assert.match(instructions, /never ask the customer to confirm a transfer you have not created/i);
+  // Asking first is reserved for genuinely missing details.
+  assert.match(instructions, /ONLY when a required detail is genuinely missing/i);
+  // The confirmation card is automatic from the tool result; the agent never invents it.
+  assert.match(instructions, /confirmation card/i);
+  assert.match(instructions, /Never invent an approval/i);
+  // Citations are scoped to documentation claims, never transfer/tool statements.
+  assert.match(instructions, /do NOT attach \[docId vN\] tokens to transfer or tool statements/i);
 });
 
 test('search without an API key returns actionable configuration guidance', async () => {
