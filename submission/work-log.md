@@ -13,6 +13,7 @@
 2. [Bug 1: Doble débito en reintentos de transferencia](#2-bug-1-doble-débito-en-reintentos-de-transferencia)
 3. [Bug 2: Documentación caducada en las respuestas](#3-bug-2-documentación-caducada-en-las-respuestas-del-asistente)
 4. [Parte 2: Trust Layer](#4-parte-2--trust-layer-feature-distintiva)
+5. [Estado final: hecho / verificado / pendiente](#estado-final-hecho--verificado--pendiente)
 
 ---
 
@@ -350,3 +351,33 @@ status: closed
 ### Nota de demo
 
 Este fix cierra el círculo del video: el mismo caso muestra la propuesta de confirmación en la telemetría (`requires_confirmation` con approvalId), la confirmación, la operación exactly-once y el cierre por el operador — todo con evidencia grabada, no narrada.
+
+---
+
+## Estado final: hecho / verificado / pendiente
+
+### Terminado
+
+**Parte 1 (preparación para el lanzamiento)** — 4 familias de defectos corregidas, cada una mapeada a su cláusula en §0:
+1. Débito múltiple en reintentos → exactly-once con reference estable, gates de intent y reconciliación de resultados desconocidos.
+2. Documentación caducada alimentando respuestas → metadatos por chunk + filtro de vigencia a la fecha de referencia + re-ingesta del índice.
+3. Confirmación explícita inexistente → propuestas con caducidad, consumo atómico, cancelación real (Discard), reutilización/supersede y registro del desenlace en la conversación.
+4. Operador ciego → telemetría íntegra, detalle de caso con conversación/actividad/operaciones bancarias, "gaps" honestos y cierre de casos.
+
+**Parte 2 (feature distintiva)** — *Trust Layer*: confirmación inline en el chat con cuenta atrás y re-petición + respuestas con citas verificables (documento, versión, vigencia) y conducta sin evidencia.
+
+### Verificado
+
+- **87 afirmaciones de test** en `npm test` (44 invariantes) + `npm run typecheck` limpio.
+- **Reproducción reproducible del bug crítico**: `scripts/repro-double-debit.ts` (€1,00 → €3,00 antes; €1,00 exacto después).
+- **Eval medido antes/después** (§0c): BEFORE 1/14 pasan · 0/14 citan → AFTER 14/14 pasan · 12/12 de las citas exigidas; 28 respuestas sin ninguna cifra inventada.
+- **Casos sembrados del propio starter** (§0b) re-verificados en vivo tras los arreglos.
+- **Recorrido funcional completo**: pedir → tarjeta → confirmar (recibo con reference) → descartar (registro) → expirar (re-petición) → auditar en la vista de operador y cerrar el caso.
+
+### Pendiente (declarado)
+
+1. **`intentId` por envío del formulario**: hoy el endpoint genera uno aleatorio por submit; el flujo de propuesta + una-propuesta-por-conversación lo mitiga (no hay doble débito automático), pero un doble clic sin confirmar puede dejar dos propuestas si no hay conversación abierta.
+2. **Chunking por secciones y prefijo de producto al embeber**: mejoraría la precisión de recuperación (el boilerplate común a los 80 documentos domina los embeddings). No abordado; el filtro de vigencia y las citas ya evitan el error material.
+3. **Recuperación histórica**: los documentos archivados no se recuperan para preguntas genuinamente históricas (limitación declarada en §0c).
+4. **Entrega**: grabar el video (guion en §4), mergear la cadena de ramas a `dev` y empaquetar el ZIP (sin `.env*`, `node_modules/`, `.next/`, `.git/`, `.data/`).
+5. **Hallazgos menores no abordados** (documentados, no corregidos): el bucle del agente se queda sin señal cuando agota las 7 rondas; `bankRequest` puede lanzar si un 5xx no trae JSON; `/api/people` no requiere sesión.
