@@ -12,9 +12,9 @@ Capa de confianza sobre el agente que cubre dos contratos incumplidos:
 ## Tareas
 
 - [x] 1. **Flujo de aprobaciones (backend)**: `authorizeTransfer` crea propuesta pendiente (id, intent, payload, expira en 10 min) y devuelve `requires_confirmation`; con `ctx.approvalId` valida integridad/expiración/consumo (atómico) y permite el despacho. Endpoint confirm con checks de `consumed_at`/`expires_at`. Idempotente por intent (reintento devuelve la misma propuesta). Tests TDD.
-- [ ] 2. **Citas verificables (agente + UI)**: prompt endurecido (citas `[docId vN]` obligatorias para afirmaciones de política, prohibido inventar tarifas/estimaciones, sin evidencia → admitirlo + siguiente paso). UI renderiza chips de cita en mensajes del asistente.
-- [ ] 3. Verificación end-to-end de ambas + demo script para el video.
-- [ ] 4. Work-unit commits separados (backend / citas) + documentación en `submission/work-log.md` §4.
+- [x] 2. **Citas verificables (agente + UI)**: prompt endurecido (citas `[docId vN]` obligatorias para afirmaciones de política, prohibido inventar tarifas/estimaciones, sin evidencia → admitirlo + siguiente paso). UI renderiza chips de cita en mensajes del asistente.
+- [x] 3. Verificación end-to-end de ambas + demo script para el video.
+- [x] 4. Work-unit commits separados (backend / citas) + documentación en `submission/work-log.md` §4.
 
 ## Decisiones de diseño
 
