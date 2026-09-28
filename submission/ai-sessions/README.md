@@ -8,4 +8,5 @@
 
 | Archivo | Tema | Estado |
 |---|---|---|
-| `session-01-setup-y-diagnostico.md` | Diagnóstico del fallo de instalación, análisis del challenge y mapeo del código | En curso |
+| `session-01-setup-y-diagnostico.md` | Diagnóstico del fallo de instalación, análisis del challenge y mapeo del código | Cerrada |
+| `session-02-implementacion-y-pulido.md` | Implementación: Parte 1 (4 bugs), Parte 2 (Trust Layer) y pulido UX | En curso (se actualiza) |

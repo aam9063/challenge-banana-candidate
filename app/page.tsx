@@ -2,6 +2,16 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Person } from '../src/types';
 type AnyRecord = Record<string, any>;
+type PendingProposal = {
+  approvalId: string;
+  expiresAt?: string;
+  proposal?: AnyRecord;
+  expired?: boolean;
+};
+const countdown = (remainingMs: number) => {
+  const total = Math.max(0, Math.floor(remainingMs / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+};
 const money = (cents: number) =>
   new Intl.NumberFormat('en-IE', { style: 'currency', currency: 'EUR' }).format(cents / 100);
 const date = (value: string) =>
@@ -103,9 +113,14 @@ export default function Home() {
     [to, setTo] = useState(''),
     [amount, setAmount] = useState(''),
     [concept, setConcept] = useState('');
+  const [pending, setPending] = useState<PendingProposal | null>(null),
+    [now, setNow] = useState(() => Date.now());
+  const [chatApprovals, setChatApprovals] = useState<AnyRecord[]>([]),
+    [dismissedApprovals, setDismissedApprovals] = useState<string[]>([]);
   const activeConversation = useRef<string | null>(null);
   const generation = useRef(0),
-    messagesEnd = useRef<HTMLDivElement>(null);
+    messagesEnd = useRef<HTMLDivElement>(null),
+    confirmCardRef = useRef<HTMLElement>(null);
   async function refresh(g = generation.current) {
     const data = await api('dashboard');
     if (g !== generation.current) return;
@@ -145,8 +160,11 @@ export default function Home() {
     setDocument(null);
     setDocs([]);
     setSources(null);
+    setChatApprovals([]);
+    setDismissedApprovals([]);
     setError('');
     setNotice('');
+    setPending(null);
     setBusy(false);
     setText('');
     setFrom('');
@@ -176,19 +194,65 @@ export default function Home() {
   useEffect(() => {
     messagesEnd.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [messages, busy]);
+  // Tick once per second while there is any live expiry to display; the
+  // cleanup keeps intervals from leaking across renders. One shared interval
+  // serves the form card, the approvals panel and the conversation cards.
+  const ticking =
+    !!pending || (dashboard?.approvals?.length ?? 0) > 0 || chatApprovals.length > 0;
+  useEffect(() => {
+    if (!ticking) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [ticking]);
+  // Bring the inline confirmation card into view once it mounts.
+  const pendingApprovalId = pending?.approvalId;
+  useEffect(() => {
+    if (!pendingApprovalId) return;
+    const raf = requestAnimationFrame(() =>
+      confirmCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }),
+    );
+    return () => cancelAnimationFrame(raf);
+  }, [pendingApprovalId]);
+  const remainingMs = (expiresAt?: string) =>
+    expiresAt ? new Date(expiresAt).getTime() - now : NaN;
+  const accountLabel = (id: string) => {
+    const account = dashboard?.accounts?.find((a: AnyRecord) => a.id === id);
+    if (account) return account.label;
+    const contact = dashboard?.contacts?.find((c: AnyRecord) => c.id === id);
+    return contact ? contact.name : id;
+  };
   async function openConversation(id: string) {
     const g = generation.current;
     activeConversation.current = id;
     setConversationId(id);
     setTab('chat');
     setMessages([]);
+    setChatApprovals([]);
+    setDismissedApprovals([]);
     setError('');
     try {
       const c = await api(`conversations/${id}`);
-      if (g === generation.current && activeConversation.current === id) setMessages(c.messages);
+      if (g === generation.current && activeConversation.current === id) {
+        setMessages(c.messages);
+        setChatApprovals(c.pendingApprovals ?? []);
+      }
     } catch (e) {
       if (g === generation.current) setError((e as Error).message);
     }
+  }
+  // Reloads the open conversation so a just-confirmed proposal disappears and
+  // the receipt message appears without a manual refresh.
+  async function reloadConversation(g = generation.current) {
+    const id = activeConversation.current;
+    if (!id) return;
+    try {
+      const c = await api(`conversations/${id}`);
+      if (g === generation.current && activeConversation.current === id) {
+        setMessages(c.messages);
+        setChatApprovals(c.pendingApprovals ?? []);
+      }
+    } catch {}
   }
   async function newConversation() {
     const g = generation.current;
@@ -201,6 +265,8 @@ export default function Home() {
       activeConversation.current = c.id;
       setConversationId(c.id);
       setMessages([]);
+      setChatApprovals([]);
+      setDismissedApprovals([]);
       setTab('chat');
       setError('');
     } catch (e) {
@@ -235,8 +301,11 @@ export default function Home() {
         try {
           if (id) {
             const c = await api(`conversations/${id}`);
-            if (g === generation.current && activeConversation.current === id)
+            if (g === generation.current && activeConversation.current === id) {
               setMessages(c.messages);
+              // A chat message can create a proposal; surface its card here.
+              setChatApprovals(c.pendingApprovals ?? []);
+            }
           }
           const cs = await api('conversations');
           if (g === generation.current) setConversations(cs);
@@ -286,6 +355,12 @@ export default function Home() {
         conversationId,
       });
       if (g !== generation.current) return;
+      if (result.status === 'requires_confirmation' && result.approvalId)
+        setPending({
+          approvalId: result.approvalId,
+          expiresAt: result.expiresAt,
+          proposal: result.proposal,
+        });
       setNotice(
         result.status === 'completed'
           ? 'Transfer completed. You can check it in your activity.'
@@ -310,10 +385,71 @@ export default function Home() {
           ? 'Transfer confirmed and completed.'
           : result.error || result.status,
       );
+      if (pending?.approvalId === id) setPending(null);
+      dismissApproval(id);
       await refresh(g);
+      // The receipt message and the consumed proposal land without a refresh.
+      await reloadConversation(g);
     } catch (e) {
-      if (g === generation.current) setError((e as Error).message);
+      if (g !== generation.current) return;
+      const message = (e as Error).message;
+      if (/already confirmed/i.test(message)) {
+        // The proposal was consumed elsewhere; it is done, so drop the card.
+        if (pending?.approvalId === id) setPending(null);
+        dismissApproval(id);
+        setNotice('This proposal was already confirmed.');
+        try {
+          await refresh(g);
+          await reloadConversation(g);
+        } catch {}
+      } else if (/expired/i.test(message) && pending?.approvalId === id) {
+        setPending({ ...pending, expired: true });
+        setError(message);
+      } else {
+        setError(message);
+      }
     }
+  }
+  function dismissApproval(id: string) {
+    setDismissedApprovals((list) => (list.includes(id) ? list : [...list, id]));
+  }
+  // Discard cancels the proposal on the server, not just the local card: the
+  // entry must disappear from the dashboard panel and the conversation too.
+  async function cancelProposal(id: string) {
+    const g = generation.current;
+    try {
+      await api(`approvals/${id}/cancel`, {});
+      if (g !== generation.current) return;
+      if (pending?.approvalId === id) setPending(null);
+      dismissApproval(id);
+      setNotice('Proposal discarded. The transfer was not sent.');
+      await refresh(g);
+      await reloadConversation(g);
+    } catch (e) {
+      if (g !== generation.current) return;
+      const message = (e as Error).message;
+      if (/already confirmed/i.test(message)) {
+        // Confirmed elsewhere: it is done, so drop the card and refresh.
+        if (pending?.approvalId === id) setPending(null);
+        dismissApproval(id);
+        setNotice('This proposal was already confirmed.');
+        try {
+          await refresh(g);
+          await reloadConversation(g);
+        } catch {}
+      } else {
+        setError(message);
+      }
+    }
+  }
+  function requestAgain(p: PendingProposal | null = pending) {
+    const proposal = p?.proposal;
+    if (!proposal) return;
+    setFrom(proposal.fromAccountId || '');
+    setTo(proposal.toAccountId || '');
+    setAmount(((proposal.amountCents || 0) / 100).toFixed(2));
+    setConcept(proposal.concept || '');
+    setPending(null);
   }
   const operator = current?.role === 'operator';
   const nav = operator
@@ -659,6 +795,82 @@ export default function Home() {
                       )}
                       <div ref={messagesEnd} />
                     </div>
+                    {chatApprovals
+                      .filter((a: AnyRecord) => !dismissedApprovals.includes(a.id))
+                      .map((a: AnyRecord) => {
+                        const remaining = remainingMs(a.expires_at);
+                        const cardExpired =
+                          a.expired || (Number.isFinite(remaining) && remaining <= 0);
+                        return (
+                          <section
+                            className="panel"
+                            key={a.id}
+                            aria-label="Confirm your transfer"
+                            style={{ margin: '0 16px' }}
+                          >
+                            <div className="section-title">
+                              <h2>Confirm your transfer</h2>
+                              <span className="subtle-tag">Nothing moved yet</span>
+                            </div>
+                            <p>
+                              <strong>{money(a.payload?.amountCents ?? 0)}</strong> ·{' '}
+                              {accountLabel(a.payload?.fromAccountId || '')} →{' '}
+                              {accountLabel(a.payload?.toAccountId || '')}
+                            </p>
+                            <p>{a.payload?.concept}</p>
+                            {cardExpired ? (
+                              <>
+                                <p role="status" aria-live="polite">
+                                  This proposal expired. Request the transfer again.
+                                </p>
+                                <div style={{ display: 'flex', gap: 8 }}>
+                                  <button
+                                    className="primary-button"
+                                    onClick={() => {
+                                      requestAgain({
+                                        approvalId: a.id,
+                                        proposal: a.payload,
+                                      });
+                                      setTab('transfer');
+                                    }}
+                                  >
+                                    Request again
+                                  </button>
+                                  <button
+                                    className="secondary-button"
+                                    onClick={() => cancelProposal(a.id)}
+                                  >
+                                    Discard
+                                  </button>
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                {Number.isFinite(remaining) && (
+                                  <small role="status" aria-live="polite">
+                                    <Icon name="clock" /> Expires in {countdown(remaining)}
+                                  </small>
+                                )}
+                                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                                  <button
+                                    className="primary-button"
+                                    disabled={busy}
+                                    onClick={() => confirm(a.id)}
+                                  >
+                                    Confirm these details
+                                  </button>
+                                  <button
+                                    className="secondary-button"
+                                    onClick={() => cancelProposal(a.id)}
+                                  >
+                                    Discard
+                                  </button>
+                                </div>
+                              </>
+                            )}
+                          </section>
+                        );
+                      })}
                     <form
                       className="composer"
                       onSubmit={(e) => {
@@ -776,23 +988,101 @@ export default function Home() {
                       </button>
                     </aside>
                   </div>
+                  {pending &&
+                    (() => {
+                      const remaining = remainingMs(pending.expiresAt);
+                      const cardExpired =
+                        pending.expired || (Number.isFinite(remaining) && remaining <= 0);
+                      return (
+                        <section
+                          className="panel"
+                          ref={confirmCardRef}
+                          aria-label="Confirm your transfer"
+                          style={{ marginTop: 16 }}
+                        >
+                          <div className="section-title">
+                            <h2>Confirm your transfer</h2>
+                            <span className="subtle-tag">Nothing moved yet</span>
+                          </div>
+                          <p>
+                            <strong>
+                              {money(pending.proposal?.amountCents ?? 0)}
+                            </strong>{' '}
+                            · {accountLabel(pending.proposal?.fromAccountId || '')} →{' '}
+                            {accountLabel(pending.proposal?.toAccountId || '')}
+                          </p>
+                          <p>{pending.proposal?.concept}</p>
+                          {cardExpired ? (
+                            <>
+                              <p role="status" aria-live="polite">
+                                This proposal expired. Request the transfer again.
+                              </p>
+                              <div style={{ display: 'flex', gap: 8 }}>
+                                <button className="primary-button" onClick={() => requestAgain()}>
+                                  Request again
+                                </button>
+                                <button
+                                  className="secondary-button"
+                                  onClick={() => cancelProposal(pending.approvalId)}
+                                >
+                                  Discard
+                                </button>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              {Number.isFinite(remaining) && (
+                                <small role="status" aria-live="polite">
+                                  <Icon name="clock" /> Expires in {countdown(remaining)}
+                                </small>
+                              )}
+                              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                                <button
+                                  className="primary-button"
+                                  onClick={() => confirm(pending.approvalId)}
+                                >
+                                  Confirm these details
+                                </button>
+                                <button
+                                  className="secondary-button"
+                                  onClick={() => cancelProposal(pending.approvalId)}
+                                >
+                                  Discard
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </section>
+                      );
+                    })()}
                 </>
               )}
               {dashboard.approvals?.length > 0 && (
                 <section className="panel approvals">
                   <h2>Proposals awaiting confirmation</h2>
-                  {dashboard.approvals.map((a: AnyRecord) => (
-                    <div key={a.id}>
-                      <p>
-                        <strong>{money(a.payload.amountCents)}</strong> · {a.payload.fromAccountId}{' '}
-                        → {a.payload.toAccountId}
-                      </p>
-                      <p>{a.payload.concept}</p>
-                      <button className="primary-button" onClick={() => confirm(a.id)}>
-                        Confirm these details
-                      </button>
-                    </div>
-                  ))}
+                  {dashboard.approvals.map((a: AnyRecord) => {
+                    const remaining = remainingMs(a.expires_at);
+                    return (
+                      <div key={a.id}>
+                        <p>
+                          <strong>{money(a.payload.amountCents)}</strong> ·{' '}
+                          {accountLabel(a.payload.fromAccountId)} →{' '}
+                          {accountLabel(a.payload.toAccountId)}
+                        </p>
+                        <p>{a.payload.concept}</p>
+                        {Number.isFinite(remaining) && remaining > 0 && (
+                          <p>
+                            <small role="status" aria-live="polite">
+                              Expires in {countdown(remaining)}
+                            </small>
+                          </p>
+                        )}
+                        <button className="primary-button" onClick={() => confirm(a.id)}>
+                          Confirm these details
+                        </button>
+                      </div>
+                    );
+                  })}
                 </section>
               )}
               {tab === 'overview' && operator && (

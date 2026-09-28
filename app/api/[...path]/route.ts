@@ -25,6 +25,96 @@ function conversationFor(id: string, userId: string) {
   if (!result) throw new HttpError(404, 'Conversation not found.');
   return result;
 }
+// Approval payloads are stored as JSON text; a malformed row is surfaced
+// as-is instead of being silently dropped or invented (same rule as the
+// operator case view).
+function parseJson(value: unknown) {
+  if (typeof value !== 'string' || value.length === 0) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function pendingApprovalsFor(db: ReturnType<typeof appDb>, conversationId: string, userId: string) {
+  return (
+    db
+      .prepare(
+        `SELECT approvals.id, approvals.intent_id, approvals.expires_at, approvals.payload
+         FROM approvals JOIN intents ON approvals.intent_id=intents.id
+         WHERE intents.conversation_id=? AND approvals.user_id=?
+           AND approvals.consumed_at IS NULL AND approvals.cancelled_at IS NULL
+           AND approvals.expires_at>?
+         ORDER BY approvals.rowid`,
+      )
+      .all(conversationId, userId, new Date().toISOString()) as any[]
+  ).map((a) => ({
+    id: a.id,
+    intent_id: a.intent_id,
+    expires_at: a.expires_at,
+    payload: parseJson(a.payload),
+  }));
+}
+
+/**
+ * Resolves account/contact labels from the bank for a transfer pair. If the
+ * label lookup fails, the raw account ids are used — names are never invented.
+ */
+async function transferLabels(userId: string, fromAccountId: unknown, toAccountId: unknown) {
+  let fromLabel = String(fromAccountId);
+  let toLabel = String(toAccountId);
+  try {
+    const [accounts, contacts] = await Promise.all([
+      bankRequest<any[]>(userId, '/v1/accounts'),
+      bankRequest<any[]>(userId, '/v1/contacts'),
+    ]);
+    const from = Array.isArray(accounts)
+      ? accounts.find((a) => a.id === fromAccountId)
+      : undefined;
+    if (from?.label) fromLabel = String(from.label);
+    const toContact = Array.isArray(contacts)
+      ? contacts.find((c) => c.id === toAccountId)
+      : undefined;
+    const toAccount = Array.isArray(accounts)
+      ? accounts.find((a) => a.id === toAccountId)
+      : undefined;
+    if (toContact) toLabel = `${toContact.name}'s ${toContact.label}`;
+    else if (toAccount?.label) toLabel = String(toAccount.label);
+  } catch {
+    // Keep the raw account ids; the amounts and reference stay verified.
+  }
+  return { fromLabel, toLabel };
+}
+
+/**
+ * Builds the chat receipt from verified facts only: the bank operation plus
+ * resolved account/contact labels.
+ */
+async function receiptContent(userId: string, operation: any): Promise<string> {
+  const { fromLabel, toLabel } = await transferLabels(
+    userId,
+    operation.fromAccountId,
+    operation.toAccountId,
+  );
+  const amount = (Number(operation.amountCents) / 100).toFixed(2);
+  return `Transfer completed: EUR ${amount} from your ${fromLabel} to ${toLabel} (concept: ${operation.concept}). Reference: ${operation.reference}.`;
+}
+
+/**
+ * Builds the cancellation notice from the stored proposal payload plus
+ * resolved labels only. A cancelled proposal never reached the bank, so there
+ * is no bank operation and the message must never claim one.
+ */
+async function cancellationContent(userId: string, payload: any): Promise<string> {
+  const { fromLabel, toLabel } = await transferLabels(
+    userId,
+    payload?.fromAccountId,
+    payload?.toAccountId,
+  );
+  const amount = (Number(payload?.amountCents) / 100).toFixed(2);
+  return `Transfer cancelled: EUR ${amount} from your ${fromLabel} to ${toLabel} (concept: ${payload?.concept}) was not sent. No money has moved.`;
+}
 async function handler(request: Request, context: RouteContext) {
   try {
     const { path } = await context.params;
@@ -62,7 +152,7 @@ async function handler(request: Request, context: RouteContext) {
       const approvals = (
         db
           .prepare(
-            'SELECT * FROM approvals WHERE user_id=? AND consumed_at IS NULL AND expires_at>?',
+            'SELECT * FROM approvals WHERE user_id=? AND consumed_at IS NULL AND cancelled_at IS NULL AND expires_at>?',
           )
           .all(current.id, new Date().toISOString()) as any[]
       ).map((a) => ({ ...a, payload: JSON.parse(a.payload) }));
@@ -105,6 +195,7 @@ async function handler(request: Request, context: RouteContext) {
         messages: db
           .prepare('SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at,rowid')
           .all(path[1]),
+        pendingApprovals: pendingApprovalsFor(db, path[1], current.id),
       });
     }
     if (route === 'actions' && request.method === 'POST') {
@@ -141,24 +232,92 @@ async function handler(request: Request, context: RouteContext) {
       // completed (the intent gate would otherwise return the stored result).
       if (approval.consumed_at)
         throw new HttpError(409, 'This proposal was already confirmed.');
+      if (approval.cancelled_at)
+        throw new HttpError(409, 'This proposal was cancelled and the transfer was not sent.');
       if (approval.expires_at <= new Date().toISOString())
         throw new HttpError(410, 'This proposal has expired; request the transfer again.');
       const intent = db
         .prepare('SELECT * FROM intents WHERE id=? AND user_id=?')
         .get(approval.intent_id, current.id) as any;
       if (!intent) throw new HttpError(404, 'Intent not found.');
-      return json(
-        await transferMoney(
-          {
-            userId: current.id,
-            conversationId: intent.conversation_id,
-            runId: randomUUID(),
-            intentId: intent.id,
-            approvalId: approval.id,
-          },
-          JSON.parse(approval.payload),
-        ),
+      const result = await transferMoney(
+        {
+          userId: current.id,
+          conversationId: intent.conversation_id,
+          runId: randomUUID(),
+          intentId: intent.id,
+          approvalId: approval.id,
+        },
+        JSON.parse(approval.payload),
       );
+      // Close the loop inside the conversation: after a verified completion,
+      // append a receipt built only from the bank-verified operation. Nothing
+      // is appended for non-completed results or on the error paths above.
+      if (
+        result.status === 'completed' &&
+        intent.conversation_id &&
+        result.operation &&
+        typeof (result.operation as any).reference === 'string'
+      ) {
+        try {
+          db.prepare('INSERT INTO messages VALUES(?,?,?,?,?,?)').run(
+            randomUUID(),
+            intent.conversation_id,
+            'assistant',
+            await receiptContent(current.id, result.operation),
+            new Date().toISOString(),
+            null,
+          );
+        } catch (e) {
+          // The transfer completed; a receipt failure must not fail the confirm.
+          console.error('receipt_message_failed', e instanceof Error ? e.name : 'unknown');
+        }
+      }
+      return json(result);
+    }
+    if (path[0] === 'approvals' && path[1] && path[2] === 'cancel' && request.method === 'POST') {
+      // Cancelling a proposal must not be possible for another user: the
+      // user_id scope makes a foreign approval indistinguishable from a
+      // missing one (404), never an authorization leak.
+      const approval = db
+        .prepare('SELECT * FROM approvals WHERE id=? AND user_id=?')
+        .get(path[1], current.id) as any;
+      if (!approval) throw new HttpError(404, 'Proposal not found.');
+      if (approval.consumed_at)
+        throw new HttpError(409, 'This proposal was already confirmed and cannot be cancelled.');
+      // Already cancelled: idempotent success, no state change.
+      if (approval.cancelled_at) return json({ status: 'cancelled' });
+      const cancelled = db
+        .prepare(
+          'UPDATE approvals SET cancelled_at=? WHERE id=? AND user_id=? AND consumed_at IS NULL AND cancelled_at IS NULL',
+        )
+        .run(new Date().toISOString(), path[1], current.id);
+      if (cancelled.changes !== 1)
+        throw new HttpError(409, 'This proposal was already confirmed and cannot be cancelled.');
+      // Close the loop inside the conversation: record what happened so the
+      // chat reflects the cancellation, exactly like confirming appends a
+      // receipt. Appended only once, on the first successful cancel, and only
+      // when the intent belongs to a conversation. Built from the stored
+      // payload — there is no bank operation for a cancelled proposal.
+      try {
+        const intent = db
+          .prepare('SELECT * FROM intents WHERE id=? AND user_id=?')
+          .get(approval.intent_id, current.id) as any;
+        if (intent?.conversation_id) {
+          db.prepare('INSERT INTO messages VALUES(?,?,?,?,?,?)').run(
+            randomUUID(),
+            intent.conversation_id,
+            'assistant',
+            await cancellationContent(current.id, parseJson(approval.payload)),
+            new Date().toISOString(),
+            null,
+          );
+        }
+      } catch (e) {
+        // The cancellation succeeded; a message failure must not fail it.
+        console.error('cancel_message_failed', e instanceof Error ? e.name : 'unknown');
+      }
+      return json({ status: 'cancelled' });
     }
     if (path[0] === 'incidents') {
       if (current.role !== 'operator') throw new HttpError(403, 'Operator role required.');

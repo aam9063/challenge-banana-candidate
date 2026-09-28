@@ -11,6 +11,7 @@ type ApprovalRow = {
   payload: string;
   expires_at: string;
   consumed_at: string | null;
+  cancelled_at: string | null;
 };
 
 const APPROVAL_TTL_MS = 10 * 60 * 1000;
@@ -18,7 +19,7 @@ const APPROVAL_TTL_MS = 10 * 60 * 1000;
 function pendingApprovalFor(db: ReturnType<typeof appDb>, intentId: string, userId: string) {
   return db
     .prepare(
-      'SELECT * FROM approvals WHERE intent_id=? AND user_id=? AND consumed_at IS NULL AND expires_at>?',
+      'SELECT * FROM approvals WHERE intent_id=? AND user_id=? AND consumed_at IS NULL AND cancelled_at IS NULL AND expires_at>?',
     )
     .get(intentId, userId, new Date().toISOString()) as ApprovalRow | undefined;
 }
@@ -46,12 +47,15 @@ export async function authorizeTransfer(
       };
     const approvalId = randomUUID();
     const expiresAt = new Date(Date.now() + APPROVAL_TTL_MS).toISOString();
-    db.prepare('INSERT INTO approvals VALUES(?,?,?,?,?,?)').run(
+    db.prepare(
+      'INSERT INTO approvals(id,user_id,intent_id,payload,expires_at,consumed_at,cancelled_at) VALUES(?,?,?,?,?,?,?)',
+    ).run(
       approvalId,
       ctx.userId,
       ctx.intentId,
       JSON.stringify(input),
       expiresAt,
+      null,
       null,
     );
     return {
@@ -69,13 +73,17 @@ export async function authorizeTransfer(
     .get(ctx.approvalId, ctx.userId) as ApprovalRow | undefined;
   if (!approval) throw new HttpError(404, 'Proposal not found.');
   if (approval.consumed_at) throw new HttpError(409, 'This proposal was already confirmed.');
+  if (approval.cancelled_at)
+    throw new HttpError(409, 'This proposal was cancelled and the transfer was not sent.');
   if (approval.expires_at <= new Date().toISOString())
     throw new HttpError(410, 'This proposal has expired; request the transfer again.');
   if (approval.payload !== JSON.stringify(input))
     throw new HttpError(409, 'The proposal does not match the transfer being confirmed.');
   // Consume atomically: exactly one confirm may win the race.
   const consumed = db
-    .prepare('UPDATE approvals SET consumed_at=? WHERE id=? AND consumed_at IS NULL')
+    .prepare(
+      'UPDATE approvals SET consumed_at=? WHERE id=? AND consumed_at IS NULL AND cancelled_at IS NULL',
+    )
     .run(new Date().toISOString(), approval.id);
   if (consumed.changes !== 1)
     throw new HttpError(409, 'This proposal was already confirmed.');

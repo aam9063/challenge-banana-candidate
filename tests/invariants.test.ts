@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'banana-tests-'));
 process.env.DATA_DIR = temp;
 process.env.BANK_DATA_DIR = temp;
@@ -20,6 +21,7 @@ const { allChunks, replaceChunks } = await import('../src/retrieval/store');
 const { searchDocuments } = await import('../src/retrieval/search');
 const { embeddingKey, vectorBuffer, dimensions } = await import('../src/retrieval/embeddings');
 import type { Chunk, DocumentRecord } from '../src/types';
+
 const input = {
   fromAccountId: 'acc-lucia',
   toAccountId: 'acc-bruno',
@@ -335,15 +337,10 @@ function startFakeBank() {
   const requests: Array<{ method: string; path: string; actor: string; body: any }> = [];
   const operations = new Map<string, any>();
   const behavior = {
-    transfer: null as
-      | null
-      | ((
-          body: any,
-          commit: () => void,
-          replay: boolean,
-        ) => FakeBankResponse),
+    transfer: null as null | ((body: any, commit: () => void, replay: boolean) => FakeBankResponse),
     lookup: null as null | ((reference: string) => FakeBankResponse),
     operator: null as null | (() => FakeBankResponse),
+    contacts: null as null | (() => FakeBankResponse),
   };
   const server = http.createServer((req, res) => {
     let raw = '';
@@ -376,6 +373,8 @@ function startFakeBank() {
             status: 'completed',
           });
       };
+      if (req.method === 'GET' && requestPath.startsWith('/v1/movements'))
+        return respond({ status: 200, payload: [] });
       if (req.method === 'GET' && requestPath.startsWith('/v1/accounts'))
         return respond({
           status: 200,
@@ -389,6 +388,13 @@ function startFakeBank() {
             },
           ],
         });
+      if (req.method === 'GET' && requestPath.startsWith('/v1/contacts')) {
+        if (behavior.contacts) return respond(behavior.contacts());
+        return respond({
+          status: 200,
+          payload: [{ id: 'acc-bruno', name: 'Bruno Vidal', label: 'Horizon' }],
+        });
+      }
       if (req.method === 'POST' && requestPath === '/v1/transfers') {
         const body = JSON.parse(raw);
         const replay = operations.has(body.reference);
@@ -477,9 +483,7 @@ test('a committed transfer with a lost response is debited exactly once', async 
   assert.equal(first.status, 'completed');
   assert.equal(retry.status, 'completed');
   assert.equal(fakeBank.operations.size, 1);
-  const posts = fakeBank.requests.filter(
-    (r) => r.method === 'POST' && r.path === '/v1/transfers',
-  );
+  const posts = fakeBank.requests.filter((r) => r.method === 'POST' && r.path === '/v1/transfers');
   assert.equal(posts.length, 2); // lost response + in-loop replay retry, nothing more
   assert.equal(posts[0].body.reference, posts[1].body.reference);
   assert.equal(intentRow(intentId).bank_reference, posts[0].body.reference);
@@ -557,6 +561,7 @@ const resetApprovalBehavior = () => {
   fakeBank.behavior.transfer = null;
   fakeBank.behavior.lookup = null;
   fakeBank.behavior.operator = null;
+  fakeBank.behavior.contacts = null;
 };
 const transferPosts = () =>
   fakeBank.requests.filter((r) => r.method === 'POST' && r.path === '/v1/transfers').length;
@@ -568,6 +573,25 @@ const confirmResponse = async (approvalId: string) => {
       headers: { cookie: `banana_actor=${sessionToken('lucia')}` },
     }),
     { params: Promise.resolve({ path: ['approvals', approvalId, 'confirm'] }) },
+  );
+};
+const cancelResponse = async (approvalId: string, user = 'lucia') => {
+  const { POST } = await import('../app/api/[...path]/route');
+  return POST(
+    new Request(`http://localhost/api/approvals/${approvalId}/cancel`, {
+      method: 'POST',
+      headers: { cookie: `banana_actor=${sessionToken(user)}` },
+    }),
+    { params: Promise.resolve({ path: ['approvals', approvalId, 'cancel'] }) },
+  );
+};
+const dashboardResponse = async () => {
+  const { GET } = await import('../app/api/[...path]/route');
+  return GET(
+    new Request('http://localhost/api/dashboard', {
+      headers: { cookie: `banana_actor=${sessionToken('lucia')}` },
+    }),
+    { params: Promise.resolve({ path: ['dashboard'] }) },
   );
 };
 
@@ -660,12 +684,295 @@ test('confirming an approval whose stored payload was tampered with is rejected 
     .prepare('UPDATE approvals SET payload=? WHERE id=?')
     .run(JSON.stringify({ ...input, amountCents: 999 }), proposal.approvalId);
   await assert.rejects(
-    () =>
-      transferMoney({ ...transferContext(intentId), approvalId: proposal.approvalId }, input),
-    (e: unknown) =>
-      e instanceof HttpError && e.status === 409 && /does not match/i.test(e.message),
+    () => transferMoney({ ...transferContext(intentId), approvalId: proposal.approvalId }, input),
+    (e: unknown) => e instanceof HttpError && e.status === 409 && /does not match/i.test(e.message),
   );
   assert.equal(transferPosts(), 0);
+});
+
+// --- Cancellation: discarding a proposal must kill it server-side ---
+test('cancelling a proposal marks it cancelled and removes it from conversation and dashboard', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  const conversationId = 'conv-cancel';
+  createConversation(conversationId, 'Cancel');
+  const proposal = await conversationProposal(conversationId, 'intent-cancel');
+
+  const response = await cancelResponse(proposal.approvalId);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { status: 'cancelled' });
+  const row = appDb()
+    .prepare('SELECT cancelled_at FROM approvals WHERE id=?')
+    .get(proposal.approvalId) as any;
+  assert.ok(row.cancelled_at);
+
+  const conversation = await (await conversationResponse(conversationId)).json();
+  assert.deepEqual(conversation.pendingApprovals, []);
+  const dashboard = await (await dashboardResponse()).json();
+  assert.deepEqual(dashboard.approvals, []);
+});
+
+test('confirming a cancelled proposal is rejected with 409 and dispatches no transfer', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  const intentId = 'intent-cancel-then-confirm';
+  const proposal = (await transferMoney(transferContext(intentId), input)) as any;
+  assert.equal((await cancelResponse(proposal.approvalId)).status, 200);
+
+  const response = await confirmResponse(proposal.approvalId);
+  assert.equal(response.status, 409);
+  assert.match((await response.json()).error, /cancelled/i);
+  assert.equal(transferPosts(), 0);
+
+  // A cancelled proposal must never be reused by an agent retry: the retry
+  // creates a fresh proposal instead of returning the cancelled one.
+  const retry = (await transferMoney(transferContext(intentId), input)) as any;
+  assert.equal(retry.status, 'requires_confirmation');
+  assert.notEqual(retry.approvalId, proposal.approvalId);
+});
+
+test('cancelling a proposal twice is idempotent', async () => {
+  seedApp();
+  resetApprovalBehavior();
+  const proposal = (await transferMoney(transferContext('intent-cancel-twice'), input)) as any;
+  const first = await cancelResponse(proposal.approvalId);
+  assert.equal(first.status, 200);
+  assert.deepEqual(await first.json(), { status: 'cancelled' });
+  const second = await cancelResponse(proposal.approvalId);
+  assert.equal(second.status, 200);
+  assert.deepEqual(await second.json(), { status: 'cancelled' });
+});
+
+test('cancelling another user\'s approval is not found', async () => {
+  seedApp();
+  resetApprovalBehavior();
+  const proposal = (await transferMoney(transferContext('intent-cancel-foreign'), input)) as any;
+  const response = await cancelResponse(proposal.approvalId, 'bruno');
+  assert.equal(response.status, 404);
+  // The owner can still confirm it: nothing was cancelled.
+  const row = appDb()
+    .prepare('SELECT cancelled_at FROM approvals WHERE id=?')
+    .get(proposal.approvalId) as any;
+  assert.equal(row.cancelled_at, null);
+});
+
+// --- Conversation loop closure: pending proposals in chat, receipt message ---
+const conversationResponse = async (conversationId: string) => {
+  const { GET } = await import('../app/api/[...path]/route');
+  return GET(
+    new Request(`http://localhost/api/conversations/${conversationId}`, {
+      headers: { cookie: `banana_actor=${sessionToken('lucia')}` },
+    }),
+    { params: Promise.resolve({ path: ['conversations', conversationId] }) },
+  );
+};
+const conversationProposal = async (conversationId: string, intentId: string) =>
+  (await transferMoney(
+    { userId: 'lucia', conversationId, runId: `run-${intentId}`, intentId },
+    input,
+  )) as any;
+const receiptCount = (conversationId: string) =>
+  (
+    appDb()
+      .prepare(
+        "SELECT COUNT(*) n FROM messages WHERE conversation_id=? AND role='assistant' AND content LIKE 'Transfer completed:%'",
+      )
+      .get(conversationId) as { n: number }
+  ).n;
+const createConversation = (id: string, title: string) =>
+  appDb()
+    .prepare('INSERT INTO conversations VALUES(?,?,?,?)')
+    .run(id, 'lucia', title, new Date().toISOString());
+
+test('conversation GET returns pendingApprovals and excludes consumed or expired ones', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  const conversationId = 'conv-pending-approvals';
+  createConversation(conversationId, 'Pending approvals');
+  const proposal = await conversationProposal(conversationId, 'intent-pending');
+  assert.equal(proposal.status, 'requires_confirmation');
+
+  const response = await conversationResponse(conversationId);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual(body.pendingApprovals, [
+    {
+      id: proposal.approvalId,
+      intent_id: 'intent-pending',
+      expires_at: proposal.expiresAt,
+      payload: input,
+    },
+  ]);
+
+  // Expired proposals are no longer pending.
+  appDb()
+    .prepare('UPDATE approvals SET expires_at=? WHERE id=?')
+    .run(new Date(Date.now() - 1000).toISOString(), proposal.approvalId);
+  const expired = await (await conversationResponse(conversationId)).json();
+  assert.deepEqual(expired.pendingApprovals, []);
+
+  // Consumed proposals are no longer pending either.
+  appDb()
+    .prepare('UPDATE approvals SET expires_at=?, consumed_at=? WHERE id=?')
+    .run(new Date(Date.now() + 60000).toISOString(), new Date().toISOString(), proposal.approvalId);
+  const consumed = await (await conversationResponse(conversationId)).json();
+  assert.deepEqual(consumed.pendingApprovals, []);
+});
+
+test('confirming from a conversation appends exactly one receipt message; a repeated confirm appends nothing', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  const conversationId = 'conv-receipt';
+  createConversation(conversationId, 'Receipt');
+  const proposal = await conversationProposal(conversationId, 'intent-receipt');
+  assert.equal(receiptCount(conversationId), 0);
+
+  const confirmed = await confirmResponse(proposal.approvalId);
+  assert.equal(confirmed.status, 200);
+  const result = await confirmed.json();
+  assert.equal(result.status, 'completed');
+
+  const after = await (await conversationResponse(conversationId)).json();
+  const last = (after.messages as any[]).at(-1);
+  assert.equal(last.role, 'assistant');
+  // Labels come from the bank's account and contact records, never invented.
+  assert.equal(
+    last.content,
+    `Transfer completed: EUR 10.00 from your Everyday to Bruno Vidal's Horizon (concept: Test). Reference: ${result.operation.reference}.`,
+  );
+  assert.equal(receiptCount(conversationId), 1);
+
+  // The second confirm is rejected with 409 and appends no extra message.
+  const second = await confirmResponse(proposal.approvalId);
+  assert.equal(second.status, 409);
+  assert.equal(receiptCount(conversationId), 1);
+  const afterSecond = await (await conversationResponse(conversationId)).json();
+  assert.equal((afterSecond.messages as any[]).at(-1).id, last.id);
+});
+
+test('the receipt falls back to account ids when the bank label lookup fails', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  fakeBank.behavior.contacts = () => ({ status: 503 });
+  try {
+    const conversationId = 'conv-receipt-fallback';
+    createConversation(conversationId, 'Receipt fallback');
+    const proposal = await conversationProposal(conversationId, 'intent-receipt-fb');
+    const confirmed = await confirmResponse(proposal.approvalId);
+    assert.equal(confirmed.status, 200);
+    const result = await confirmed.json();
+    const after = await (await conversationResponse(conversationId)).json();
+    const last = (after.messages as any[]).at(-1);
+    assert.equal(
+      last.content,
+      `Transfer completed: EUR 10.00 from your acc-lucia to acc-bruno (concept: Test). Reference: ${result.operation.reference}.`,
+    );
+    // No invented names when the lookup fails.
+    assert.doesNotMatch(last.content, /Everyday|Bruno Vidal|Horizon/);
+  } finally {
+    fakeBank.behavior.contacts = null;
+  }
+});
+
+// --- Cancellation loop closure: a discarded proposal leaves a chat message ---
+const cancelCount = (conversationId: string) =>
+  (
+    appDb()
+      .prepare(
+        "SELECT COUNT(*) n FROM messages WHERE conversation_id=? AND role='assistant' AND content LIKE 'Transfer cancelled:%'",
+      )
+      .get(conversationId) as { n: number }
+  ).n;
+
+test('cancelling from a conversation appends exactly one cancellation message; re-cancelling appends nothing', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  const conversationId = 'conv-cancel-message';
+  createConversation(conversationId, 'Cancel message');
+  const proposal = await conversationProposal(conversationId, 'intent-cancel-message');
+  assert.equal(cancelCount(conversationId), 0);
+
+  const first = await cancelResponse(proposal.approvalId);
+  assert.equal(first.status, 200);
+  const after = await (await conversationResponse(conversationId)).json();
+  const last = (after.messages as any[]).at(-1);
+  assert.equal(last.role, 'assistant');
+  // Labels come from the bank's records; the message is built only from the
+  // stored payload, never from a bank operation (none exists for a cancel).
+  assert.equal(
+    last.content,
+    `Transfer cancelled: EUR 10.00 from your Everyday to Bruno Vidal's Horizon (concept: Test) was not sent. No money has moved.`,
+  );
+  assert.equal(cancelCount(conversationId), 1);
+  assert.deepEqual(after.pendingApprovals, []);
+
+  // The idempotent re-cancel must not append a duplicate message.
+  const second = await cancelResponse(proposal.approvalId);
+  assert.equal(second.status, 200);
+  assert.equal(cancelCount(conversationId), 1);
+  const afterSecond = await (await conversationResponse(conversationId)).json();
+  assert.equal((afterSecond.messages as any[]).at(-1).id, last.id);
+});
+
+test('cancelling an approval whose intent has no conversation appends no message and still succeeds', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  const totalCancellations = () =>
+    (
+      appDb()
+        .prepare(
+          "SELECT COUNT(*) n FROM messages WHERE role='assistant' AND content LIKE 'Transfer cancelled:%'",
+        )
+        .get() as { n: number }
+    ).n;
+  const before = totalCancellations();
+  const proposal = (await transferMoney(transferContext('intent-cancel-no-conv'), input)) as any;
+  assert.equal(proposal.status, 'requires_confirmation');
+  assert.equal(intentRow('intent-cancel-no-conv').conversation_id, null);
+
+  const response = await cancelResponse(proposal.approvalId);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { status: 'cancelled' });
+  assert.equal(totalCancellations(), before);
+});
+
+test('the cancellation message falls back to account ids when the label lookup fails', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  fakeBank.behavior.contacts = () => ({ status: 503 });
+  try {
+    const conversationId = 'conv-cancel-fallback';
+    createConversation(conversationId, 'Cancel fallback');
+    const proposal = await conversationProposal(conversationId, 'intent-cancel-fb');
+    const response = await cancelResponse(proposal.approvalId);
+    assert.equal(response.status, 200);
+    const after = await (await conversationResponse(conversationId)).json();
+    const last = (after.messages as any[]).at(-1);
+    assert.equal(
+      last.content,
+      'Transfer cancelled: EUR 10.00 from your acc-lucia to acc-bruno (concept: Test) was not sent. No money has moved.',
+    );
+    // No invented names when the lookup fails.
+    assert.doesNotMatch(last.content, /Everyday|Bruno Vidal|Horizon/);
+  } finally {
+    fakeBank.behavior.contacts = null;
+  }
 });
 
 // --- Operator visibility: telemetry, case detail, case closure ---
@@ -691,11 +998,7 @@ const insertEvent = (
     .prepare('INSERT INTO events VALUES(?,?,?,?,?,?,?)')
     .run(id, `run-${id}`, 'lucia', conversationId, kind, JSON.stringify(data), createdAt);
 
-const insertIncident = (
-  id: string,
-  conversationId: string,
-  status: string,
-) =>
+const insertIncident = (id: string, conversationId: string, status: string) =>
   appDb()
     .prepare('INSERT INTO incidents VALUES(?,?,?,?,?,?)')
     .run(id, 'lucia', conversationId, 'Transfer help', status, new Date().toISOString());
@@ -704,7 +1007,12 @@ test('recordEvent persists the full telemetry payload, not just tool and status'
   seedApp();
   const { recordEvent } = await import('../src/telemetry');
   recordEvent(
-    { userId: 'lucia', conversationId: 'conv-telemetry', runId: 'run-telemetry', intentId: 'intent-telemetry' },
+    {
+      userId: 'lucia',
+      conversationId: 'conv-telemetry',
+      runId: 'run-telemetry',
+      intentId: 'intent-telemetry',
+    },
     'tool.completed',
     {
       tool: 'transfer_money',
@@ -714,9 +1022,7 @@ test('recordEvent persists the full telemetry payload, not just tool and status'
       durationMs: 42,
     },
   );
-  const row = appDb()
-    .prepare('SELECT * FROM events WHERE run_id=?')
-    .get('run-telemetry') as any;
+  const row = appDb().prepare('SELECT * FROM events WHERE run_id=?').get('run-telemetry') as any;
   const data = JSON.parse(row.data);
   assert.equal(data.tool, 'transfer_money');
   assert.equal(data.status, 'completed');
@@ -734,14 +1040,55 @@ test('caseDetail returns real conversation evidence and bank operations via the 
   appDb()
     .prepare('INSERT INTO conversations VALUES(?,?,?,?)')
     .run(conversationId, 'lucia', 'Case detail', new Date().toISOString());
-  insertMessage('msg-cd-2', conversationId, 'assistant', 'Let me check that for you.', '2026-01-01T10:01:00.000Z');
-  insertMessage('msg-cd-1', conversationId, 'user', 'I sent money but it disappeared.', '2026-01-01T10:00:00.000Z');
+  insertMessage(
+    'msg-cd-2',
+    conversationId,
+    'assistant',
+    'Let me check that for you.',
+    '2026-01-01T10:01:00.000Z',
+  );
+  insertMessage(
+    'msg-cd-1',
+    conversationId,
+    'user',
+    'I sent money but it disappeared.',
+    '2026-01-01T10:00:00.000Z',
+  );
   // Inserted last on purpose: ordering must follow created_at, not rowid.
-  insertEvent('evt-cd-1', conversationId, 'tool.started', { tool: 'transfer_money', status: 'started', arguments: { amountCents: 100 } }, '2026-01-01T10:02:00.000Z');
-  insertEvent('evt-cd-2', conversationId, 'tool.completed', { tool: 'transfer_money', status: 'completed', arguments: { amountCents: 100 }, output: { status: 'requires_confirmation' }, durationMs: 7 }, '2026-01-01T10:02:01.000Z');
+  insertEvent(
+    'evt-cd-1',
+    conversationId,
+    'tool.started',
+    { tool: 'transfer_money', status: 'started', arguments: { amountCents: 100 } },
+    '2026-01-01T10:02:00.000Z',
+  );
+  insertEvent(
+    'evt-cd-2',
+    conversationId,
+    'tool.completed',
+    {
+      tool: 'transfer_money',
+      status: 'completed',
+      arguments: { amountCents: 100 },
+      output: { status: 'requires_confirmation' },
+      durationMs: 7,
+    },
+    '2026-01-01T10:02:01.000Z',
+  );
   appDb()
     .prepare('INSERT INTO intents VALUES(?,?,?,?,?,?,?,?,?,?)')
-    .run('intent-cd', 'lucia', conversationId, 'run-cd', JSON.stringify(input), 'completed', 'ref-cd', 'op-cd', null, '2026-01-01T10:02:02.000Z');
+    .run(
+      'intent-cd',
+      'lucia',
+      conversationId,
+      'run-cd',
+      JSON.stringify(input),
+      'completed',
+      'ref-cd',
+      'op-cd',
+      null,
+      '2026-01-01T10:02:02.000Z',
+    );
   insertIncident('incident-cd', conversationId, 'open');
   fakeBank.operations.set('ref-cd', {
     id: 'op-cd',
@@ -774,9 +1121,7 @@ test('caseDetail returns real conversation evidence and bank operations via the 
   assert.equal(detail.bank.operations[0].reference, 'ref-cd');
   assert.equal(detail.bank.operations[0].status, 'completed');
   assert.equal(detail.gaps, '');
-  const operatorRequest = fakeBank.requests.find((r) =>
-    r.path.startsWith('/v1/operator/customer'),
-  );
+  const operatorRequest = fakeBank.requests.find((r) => r.path.startsWith('/v1/operator/customer'));
   assert.ok(operatorRequest);
   assert.equal(operatorRequest.actor, 'marta');
   assert.match(operatorRequest.path, /id=lucia/);
@@ -789,7 +1134,13 @@ test('caseDetail reports honest gaps instead of inventing evidence', async () =>
   appDb()
     .prepare('INSERT INTO conversations VALUES(?,?,?,?)')
     .run(conversationId, 'lucia', 'No activity', new Date().toISOString());
-  insertMessage('msg-gaps-1', conversationId, 'user', 'Where is my money?', '2026-01-01T11:00:00.000Z');
+  insertMessage(
+    'msg-gaps-1',
+    conversationId,
+    'user',
+    'Where is my money?',
+    '2026-01-01T11:00:00.000Z',
+  );
   insertIncident('incident-gaps', conversationId, 'open');
   const { caseDetail } = await import('../src/operator/view');
   // No recorded events and the bank is unreachable: gaps, never fabricated rows.
@@ -817,21 +1168,43 @@ test('closing a case is operator-only, persists, and rejects unknown or repeated
       { params: Promise.resolve({ path: ['incidents', incidentId, 'close'] }) },
     );
   assert.equal((await close('incident-missing')).status, 404);
-  const open = appDb()
-    .prepare("SELECT id FROM incidents WHERE status='open' LIMIT 1")
-    .get() as any;
+  const open = appDb().prepare("SELECT id FROM incidents WHERE status='open' LIMIT 1").get() as any;
   const response = await close(open.id, 'lucia');
   assert.equal(response.status, 403);
   const ok = await close(open.id);
   assert.equal(ok.status, 200);
   assert.equal((await ok.json()).status, 'closed');
   assert.equal(
-    (
-      appDb().prepare('SELECT status FROM incidents WHERE id=?').get(open.id) as any
-    ).status,
+    (appDb().prepare('SELECT status FROM incidents WHERE id=?').get(open.id) as any).status,
     'closed',
   );
   assert.equal((await close(open.id)).status, 409);
+});
+
+test('the migration adds cancelled_at to an existing approvals table', async () => {
+  // Recreate a database as it looked before the cancellation feature: an
+  // approvals table without the cancelled_at column.
+  closeAppDb();
+  for (const suffix of ['', '-wal', '-shm'])
+    fs.rmSync(path.join(temp, `app.sqlite${suffix}`), { force: true });
+  const { default: Database } = await import('better-sqlite3');
+  const old = new Database(path.join(temp, 'app.sqlite'));
+  old.exec(
+    'CREATE TABLE approvals(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,intent_id TEXT NOT NULL,payload TEXT NOT NULL,expires_at TEXT NOT NULL,consumed_at TEXT)',
+  );
+  old.close();
+  // Opening the app must migrate the pre-existing table without throwing.
+  const db = appDb();
+  const columns = db.prepare('PRAGMA table_info(approvals)').all() as Array<{ name: string }>;
+  assert.ok(columns.some((c) => c.name === 'cancelled_at'));
+  // Reopening must not attempt a second ALTER: the guard keeps it idempotent.
+  closeAppDb();
+  const reopened = appDb();
+  assert.ok(
+    (reopened.prepare('PRAGMA table_info(approvals)').all() as Array<{ name: string }>).some(
+      (c) => c.name === 'cancelled_at',
+    ),
+  );
 });
 
 after(() => {

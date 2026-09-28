@@ -182,6 +182,36 @@ Una capa de confianza sobre el asistente que cubre dos contratos incumplidos a l
 - Transferencia `requires_confirmation` → el agente explica que **no** se ejecutó y pide confirmar en el panel.
 - Chips de cita accesibles (aria-label) que abren el documento citado.
 
+### Pulido de UX (rama `feature/confirmation-ux`, commit `4236adf`)
+
+**Hallazgo en la primera sesión real de UI**: el flujo funcionaba correctamente (4 propuestas confirmadas y ejecutadas exactamente una vez), pero la propuesta aparecía solo en el panel inferior, fuera de vista, sin indicar su caducidad — la transferencia parecía "colgada". Mejoras aplicadas (solo `app/page.tsx`):
+
+- **Tarjeta inline** bajo el formulario de transferencia (monto, origen→destino con nombres, concepto) con Confirm y Discard, y auto-scroll al aparecer.
+- **Cuenta atrás en vivo** (m:ss) en la tarjeta y en cada propuesta del panel.
+- **Estado expirado** con botón "Request again" que re-llena el formulario con los mismos datos.
+- Outcomes explícitos: éxito limpia la tarjeta; "already confirmed" limpia y refresca; "expired" pasa a modo re-petición.
+
+Esto también es material de video: muestra el ciclo completo **feedback real → diagnóstico con evidencia (DB + logs) → mejora de producto**.
+
+**Segunda iteración (mismo día, commit `0a01b4f`)**: en la prueba real, el usuario confirmó desde el panel y la transferencia se ejecutó, pero **el chat no lo reflejaba** — seguía diciendo "has not been sent", sin recibo y sin forma de confirmar desde la propia conversación. Diagnóstico con evidencia: aprobación `4e31a8bf` consumida + intent `completed` en la DB vs. último mensaje del asistente congelado en el aviso previo. Arreglo:
+
+- La conversación ahora devuelve `pendingApprovals` y el chat muestra **la tarjeta de confirmación dentro de la conversación** (misma cuenta atrás/Confirm/Discard/reintento, un solo estado y un solo intervalo compartidos con el formulario y el panel).
+- Al confirmar, el backend añade **un recibo verificado** al hilo: monto, concepto, reference real y etiquetas de cuentas resueltas del banco (fallback a ids; nunca inventado). Nada se añade si el resultado no es `completed`.
+- La conversación se recarga sola tras confirmar → el recibo aparece sin refrescar, y el operador lo ve en el historial.
+
+Verificado: 3 tests nuevos (32/32), ciclo en vivo por API (propuesta → `pendingApprovals` → confirm → recibo con reference → segundo confirm 409 sin mensaje extra).
+
+**Tercera iteración (mismo día, commit `fcd0405`)**: al probar "Discard", el usuario reportó que la propuesta seguía apareciendo para confirmar, incluso fuera de la conversación. Causa: Discard era cosmético (ocultaba la tarjeta localmente) y la propuesta seguía viva en el servidor — la tabla `approvals` no tenía estado de cancelación. Arreglo:
+
+- Columna `cancelled_at` en `approvals` con **migración idempotente** (`PRAGMA table_info` + `ALTER TABLE` guardado) para bases existentes.
+- `POST /api/approvals/:id/cancel`: cancelación atómica (`UPDATE ... WHERE consumed_at IS NULL AND cancelled_at IS NULL`) e idempotente; 409 si ya fue confirmada; 404 para propuestas ajenas.
+- Filtros `cancelled_at IS NULL` en dashboard, `pendingApprovals` de la conversación y en el confirm (que ahora responde con mensaje claro y **sin ejecutar nada**).
+- UI: Discard llama al endpoint, avisa "Proposal discarded. The transfer was not sent." y refresca panel + conversación.
+
+Verificado en vivo: cancelar → desaparece de ambos lados; re-cancelar idempotente; confirmar la cancelada → 409 sin débito (saldo intacto); 5 tests nuevos (**37/37**).
+
+**Cuarta iteración (commit `959c4c5`)**: el descarte debía quedar también registrado en el chat (como el recibo de la confirmación). Se añade un mensaje de cancelación construido solo con el payload almacenado — *"Transfer cancelled: EUR 4.50 from your Aurora account to Bruno Vidal's Horizon account (concept: parent cancel msg) was not sent. No money has moved."* — exactamente una vez por cancelación (sin duplicados en re-cancel), con etiquetas resueltas del banco y fallback a ids. 3 tests nuevos (**40/40**).
+
 ### Demo script para el video (guión sugerido)
 
 1. **Cita verificable**: "What is the monthly fee of the Aurora account and when is it waived?" → respuesta con chip `[aurora-fees-2026 v2]` → click → abre el documento en la biblioteca. (Verificado: la respuesta cita condiciones exactas — €6/mes, exención con salario ≥€1.200 + 3 compras.)
