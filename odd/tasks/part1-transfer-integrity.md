@@ -9,11 +9,11 @@ Garantizar que una intención de transferencia produce **exactamente un** débit
 ## Tareas
 
 - [x] 1. Reproducir el doble débito con perfil `lost-response` (evidencia before/after guardada en `submission/work-log.md` y script `scripts/repro-double-debit.ts`). CONFIRMADO: €1.00 → €3.00 (triple débito).
-- [ ] 2. Fix: reference estable por intent en `dispatch.ts` (no regenerar en reintentos; no sobrescribir `intents.bank_reference`).
-- [ ] 3. Fix: no re-despachar intents con estado `completed`/`processing` en `actions.ts` (verificar status del intent).
-- [ ] 4. Fix: reconciliación del resultado desconocido tras 504/timeout vía `GET /v1/operations/:reference` (`operation_status`) antes de marcar failed.
-- [ ] 5. Test de regresión automatizado del doble débito.
-- [ ] 6. Work-unit commit(s) en rama de feature sobre `dev`, con tests y doc.
+- [x] 2. Fix: reference estable por intent en `dispatch.ts` (`stableReference()` — no regenerar en reintentos; no sobrescribir `intents.bank_reference`).
+- [x] 3. Fix: no re-despachar intents con estado `completed`/`processing` en `actions.ts` (gates por estado del intent).
+- [x] 4. Fix: reconciliación del resultado desconocido tras 5xx vía `GET /v1/operations/:reference` (`reconcileOutcome()`: found→completed, 404→failed verificado, lookup falla→processing no terminal).
+- [x] 5. Test de regresión automatizado (4 tests con banco fake in-process, TDD RED→GREEN, `npm test` 17/17).
+- [x] 6. Work-unit commits en rama `fix/transfer-idempotency` sobre `dev`: `404847c` (chore) + `8056774` (fix).
 
 ## Evidencia
 
