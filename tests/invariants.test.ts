@@ -1,6 +1,7 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'banana-tests-'));
@@ -214,6 +215,192 @@ test('search without an API key returns actionable configuration guidance', asyn
     else process.env.OPENAI_API_KEY = previousKey;
   }
 });
+type FakeBankResponse = { status: number; payload?: unknown };
+/**
+ * Minimal in-process bank double implementing the documented contract so the
+ * application-level transfer path can be tested without live services. The
+ * idempotency key is actor+reference; behaviors decide when effects commit.
+ */
+function startFakeBank() {
+  const requests: Array<{ method: string; path: string; body: any }> = [];
+  const operations = new Map<string, any>();
+  const behavior = {
+    transfer: null as
+      | null
+      | ((
+          body: any,
+          commit: () => void,
+          replay: boolean,
+        ) => FakeBankResponse),
+    lookup: null as null | ((reference: string) => FakeBankResponse),
+  };
+  const server = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (chunk) => (raw += chunk));
+    req.on('end', () => {
+      const requestPath = req.url ?? '';
+      requests.push({
+        method: req.method ?? '',
+        path: requestPath,
+        body: raw ? JSON.parse(raw) : undefined,
+      });
+      const respond = ({ status, payload }: FakeBankResponse) => {
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify(payload ?? (status < 400 ? {} : { error: 'Simulated bank failure.' })),
+        );
+      };
+      const commit = (body: any) => {
+        if (!operations.has(body.reference))
+          operations.set(body.reference, {
+            id: `op-${body.reference}`,
+            userId: 'lucia',
+            reference: body.reference,
+            fromAccountId: body.fromAccountId,
+            toAccountId: body.toAccountId,
+            amountCents: body.amountCents,
+            concept: body.concept,
+            createdAt: new Date().toISOString(),
+            status: 'completed',
+          });
+      };
+      if (req.method === 'GET' && requestPath.startsWith('/v1/accounts'))
+        return respond({
+          status: 200,
+          payload: [
+            {
+              id: 'acc-lucia',
+              userId: 'lucia',
+              label: 'Everyday',
+              iban: 'ES91 0000 0000 0000',
+              balanceCents: 100000,
+            },
+          ],
+        });
+      if (req.method === 'POST' && requestPath === '/v1/transfers') {
+        const body = JSON.parse(raw);
+        const replay = operations.has(body.reference);
+        if (behavior.transfer) return respond(behavior.transfer(body, () => commit(body), replay));
+        commit(body);
+        return respond({
+          status: 200,
+          payload: { ...operations.get(body.reference), ...(replay ? { replay: true } : {}) },
+        });
+      }
+      if (req.method === 'GET' && requestPath.startsWith('/v1/operations/')) {
+        const reference = decodeURIComponent(requestPath.slice('/v1/operations/'.length));
+        if (behavior.lookup) return respond(behavior.lookup(reference));
+        const operation = operations.get(reference);
+        return operation
+          ? respond({ status: 200, payload: operation })
+          : respond({ status: 404, payload: { error: 'Not found.' } });
+      }
+      return respond({ status: 404, payload: { error: 'Unknown endpoint.' } });
+    });
+  });
+  return { server, requests, operations, behavior };
+}
+
+// --- Application-level transfer idempotency (double-debit regression) ---
+const { config } = await import('../src/config');
+const fakeBank = startFakeBank();
+const originalBankUrl = config.bankUrl;
+const fakeBankUrl = await new Promise<string>((resolve) => {
+  fakeBank.server.listen(0, '127.0.0.1', () =>
+    resolve(`http://127.0.0.1:${(fakeBank.server.address() as any).port}`),
+  );
+});
+config.bankUrl = fakeBankUrl;
+const { transferMoney } = await import('../src/banking/actions');
+const transferContext = (intentId: string) => ({
+  userId: 'lucia',
+  conversationId: null,
+  runId: `run-${intentId}`,
+  intentId,
+});
+const intentRow = (intentId: string) =>
+  appDb().prepare('SELECT * FROM intents WHERE id=?').get(intentId) as any;
+after(() => {
+  config.bankUrl = originalBankUrl;
+  fakeBank.server.close();
+});
+
+test('a committed transfer with a lost response is debited exactly once', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  fakeBank.behavior.transfer = (body, commit, replay) => {
+    commit();
+    if (replay)
+      return { status: 200, payload: { ...fakeBank.operations.get(body.reference), replay: true } };
+    return { status: 504 };
+  };
+  const intentId = 'intent-lost-response';
+  const first = await transferMoney(transferContext(intentId), input);
+  const retry = await transferMoney(transferContext(intentId), input);
+  assert.equal(first.status, 'completed');
+  assert.equal(retry.status, 'completed');
+  assert.equal(fakeBank.operations.size, 1);
+  const posts = fakeBank.requests.filter(
+    (r) => r.method === 'POST' && r.path === '/v1/transfers',
+  );
+  assert.equal(posts.length, 2); // lost response + in-loop replay retry, nothing more
+  assert.equal(posts[0].body.reference, posts[1].body.reference);
+  assert.equal(intentRow(intentId).bank_reference, posts[0].body.reference);
+});
+
+test('a rejection before commit is reported as failed after verified absence', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  fakeBank.behavior.transfer = () => ({ status: 503 });
+  const intentId = 'intent-reject-before';
+  const result = await transferMoney(transferContext(intentId), input);
+  assert.equal(result.status, 'failed');
+  assert.equal(intentRow(intentId).status, 'failed');
+  assert.equal(fakeBank.operations.size, 0);
+});
+
+test('a committed operation unreachable through dispatch is recovered by reconciliation', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  fakeBank.behavior.transfer = (body, commit) => {
+    commit();
+    return { status: 504 };
+  };
+  const intentId = 'intent-reconcile-found';
+  const result = await transferMoney(transferContext(intentId), input);
+  assert.equal(result.status, 'completed');
+  assert.equal(intentRow(intentId).status, 'completed');
+});
+
+test('an unverifiable outcome stays processing and is never reported failed', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  fakeBank.behavior.transfer = (body, commit) => {
+    commit();
+    return { status: 504 };
+  };
+  fakeBank.behavior.lookup = () => ({ status: 503 });
+  const intentId = 'intent-unverified';
+  const result = await transferMoney(transferContext(intentId), input);
+  assert.equal(result.status, 'processing');
+  assert.ok(String((result as any).message).length > 0);
+  assert.equal(intentRow(intentId).status, 'processing');
+  const posts = fakeBank.requests.filter(
+    (r) => r.method === 'POST' && r.path === '/v1/transfers',
+  ).length;
+  // A processing intent must not re-dispatch on retry: only reconcile.
+  const retry = await transferMoney(transferContext(intentId), input);
+  assert.equal(retry.status, 'processing');
+  assert.equal(
+    fakeBank.requests.filter((r) => r.method === 'POST' && r.path === '/v1/transfers').length,
+    posts,
+  );
+});
+
 after(() => {
   closeAppDb();
   closeBankDb();
