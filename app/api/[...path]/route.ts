@@ -44,7 +44,8 @@ function pendingApprovalsFor(db: ReturnType<typeof appDb>, conversationId: strin
         `SELECT approvals.id, approvals.intent_id, approvals.expires_at, approvals.payload
          FROM approvals JOIN intents ON approvals.intent_id=intents.id
          WHERE intents.conversation_id=? AND approvals.user_id=?
-           AND approvals.consumed_at IS NULL AND approvals.expires_at>?
+           AND approvals.consumed_at IS NULL AND approvals.cancelled_at IS NULL
+           AND approvals.expires_at>?
          ORDER BY approvals.rowid`,
       )
       .all(conversationId, userId, new Date().toISOString()) as any[]
@@ -124,7 +125,7 @@ async function handler(request: Request, context: RouteContext) {
       const approvals = (
         db
           .prepare(
-            'SELECT * FROM approvals WHERE user_id=? AND consumed_at IS NULL AND expires_at>?',
+            'SELECT * FROM approvals WHERE user_id=? AND consumed_at IS NULL AND cancelled_at IS NULL AND expires_at>?',
           )
           .all(current.id, new Date().toISOString()) as any[]
       ).map((a) => ({ ...a, payload: JSON.parse(a.payload) }));
@@ -204,6 +205,8 @@ async function handler(request: Request, context: RouteContext) {
       // completed (the intent gate would otherwise return the stored result).
       if (approval.consumed_at)
         throw new HttpError(409, 'This proposal was already confirmed.');
+      if (approval.cancelled_at)
+        throw new HttpError(409, 'This proposal was cancelled and the transfer was not sent.');
       if (approval.expires_at <= new Date().toISOString())
         throw new HttpError(410, 'This proposal has expired; request the transfer again.');
       const intent = db
@@ -244,6 +247,27 @@ async function handler(request: Request, context: RouteContext) {
         }
       }
       return json(result);
+    }
+    if (path[0] === 'approvals' && path[1] && path[2] === 'cancel' && request.method === 'POST') {
+      // Cancelling a proposal must not be possible for another user: the
+      // user_id scope makes a foreign approval indistinguishable from a
+      // missing one (404), never an authorization leak.
+      const approval = db
+        .prepare('SELECT * FROM approvals WHERE id=? AND user_id=?')
+        .get(path[1], current.id) as any;
+      if (!approval) throw new HttpError(404, 'Proposal not found.');
+      if (approval.consumed_at)
+        throw new HttpError(409, 'This proposal was already confirmed and cannot be cancelled.');
+      // Already cancelled: idempotent success, no state change.
+      if (approval.cancelled_at) return json({ status: 'cancelled' });
+      const cancelled = db
+        .prepare(
+          'UPDATE approvals SET cancelled_at=? WHERE id=? AND user_id=? AND consumed_at IS NULL AND cancelled_at IS NULL',
+        )
+        .run(new Date().toISOString(), path[1], current.id);
+      if (cancelled.changes !== 1)
+        throw new HttpError(409, 'This proposal was already confirmed and cannot be cancelled.');
+      return json({ status: 'cancelled' });
     }
     if (path[0] === 'incidents') {
       if (current.role !== 'operator') throw new HttpError(403, 'Operator role required.');

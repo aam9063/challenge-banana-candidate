@@ -16,7 +16,7 @@ export function appDb() {
       CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL REFERENCES conversations(id),role TEXT NOT NULL,content TEXT NOT NULL,created_at TEXT NOT NULL,run_id TEXT);
       CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,conversation_id TEXT,started_at TEXT NOT NULL,status TEXT NOT NULL,error TEXT);
       CREATE TABLE IF NOT EXISTS intents(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,conversation_id TEXT,run_id TEXT,payload TEXT NOT NULL,status TEXT NOT NULL,bank_reference TEXT,operation_id TEXT,error TEXT,created_at TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS approvals(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,intent_id TEXT NOT NULL,payload TEXT NOT NULL,expires_at TEXT NOT NULL,consumed_at TEXT);
+      CREATE TABLE IF NOT EXISTS approvals(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,intent_id TEXT NOT NULL,payload TEXT NOT NULL,expires_at TEXT NOT NULL,consumed_at TEXT,cancelled_at TEXT);
       CREATE TABLE IF NOT EXISTS incidents(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,conversation_id TEXT NOT NULL,summary TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,run_id TEXT NOT NULL,user_id TEXT NOT NULL,conversation_id TEXT,kind TEXT NOT NULL,data TEXT NOT NULL,created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS chunks(id TEXT PRIMARY KEY,document_id TEXT NOT NULL,text TEXT NOT NULL,title TEXT,version INTEGER,valid_from TEXT,valid_to TEXT,audience TEXT NOT NULL,vector BLOB NOT NULL);
@@ -25,6 +25,15 @@ export function appDb() {
       CREATE INDEX IF NOT EXISTS incidents_user ON incidents(user_id);
       CREATE INDEX IF NOT EXISTS events_conversation ON events(conversation_id,created_at);
     `);
+    // Migration for databases created before cancellations existed: add the
+    // cancelled_at column to an existing approvals table. The PRAGMA guard
+    // makes this idempotent — repeated runs never re-run the ALTER (which
+    // would throw a duplicate-column error).
+    const approvalsColumns = instance
+      .prepare('PRAGMA table_info(approvals)')
+      .all() as Array<{ name: string }>;
+    if (!approvalsColumns.some((c) => c.name === 'cancelled_at'))
+      instance.exec('ALTER TABLE approvals ADD COLUMN cancelled_at TEXT');
   }
   return instance;
 }

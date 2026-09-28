@@ -373,6 +373,8 @@ function startFakeBank() {
             status: 'completed',
           });
       };
+      if (req.method === 'GET' && requestPath.startsWith('/v1/movements'))
+        return respond({ status: 200, payload: [] });
       if (req.method === 'GET' && requestPath.startsWith('/v1/accounts'))
         return respond({
           status: 200,
@@ -573,6 +575,25 @@ const confirmResponse = async (approvalId: string) => {
     { params: Promise.resolve({ path: ['approvals', approvalId, 'confirm'] }) },
   );
 };
+const cancelResponse = async (approvalId: string, user = 'lucia') => {
+  const { POST } = await import('../app/api/[...path]/route');
+  return POST(
+    new Request(`http://localhost/api/approvals/${approvalId}/cancel`, {
+      method: 'POST',
+      headers: { cookie: `banana_actor=${sessionToken(user)}` },
+    }),
+    { params: Promise.resolve({ path: ['approvals', approvalId, 'cancel'] }) },
+  );
+};
+const dashboardResponse = async () => {
+  const { GET } = await import('../app/api/[...path]/route');
+  return GET(
+    new Request('http://localhost/api/dashboard', {
+      headers: { cookie: `banana_actor=${sessionToken('lucia')}` },
+    }),
+    { params: Promise.resolve({ path: ['dashboard'] }) },
+  );
+};
 
 test('an agent-initiated transfer proposes confirmation instead of dispatching', async () => {
   seedApp();
@@ -667,6 +688,76 @@ test('confirming an approval whose stored payload was tampered with is rejected 
     (e: unknown) => e instanceof HttpError && e.status === 409 && /does not match/i.test(e.message),
   );
   assert.equal(transferPosts(), 0);
+});
+
+// --- Cancellation: discarding a proposal must kill it server-side ---
+test('cancelling a proposal marks it cancelled and removes it from conversation and dashboard', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  const conversationId = 'conv-cancel';
+  createConversation(conversationId, 'Cancel');
+  const proposal = await conversationProposal(conversationId, 'intent-cancel');
+
+  const response = await cancelResponse(proposal.approvalId);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { status: 'cancelled' });
+  const row = appDb()
+    .prepare('SELECT cancelled_at FROM approvals WHERE id=?')
+    .get(proposal.approvalId) as any;
+  assert.ok(row.cancelled_at);
+
+  const conversation = await (await conversationResponse(conversationId)).json();
+  assert.deepEqual(conversation.pendingApprovals, []);
+  const dashboard = await (await dashboardResponse()).json();
+  assert.deepEqual(dashboard.approvals, []);
+});
+
+test('confirming a cancelled proposal is rejected with 409 and dispatches no transfer', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  const intentId = 'intent-cancel-then-confirm';
+  const proposal = (await transferMoney(transferContext(intentId), input)) as any;
+  assert.equal((await cancelResponse(proposal.approvalId)).status, 200);
+
+  const response = await confirmResponse(proposal.approvalId);
+  assert.equal(response.status, 409);
+  assert.match((await response.json()).error, /cancelled/i);
+  assert.equal(transferPosts(), 0);
+
+  // A cancelled proposal must never be reused by an agent retry: the retry
+  // creates a fresh proposal instead of returning the cancelled one.
+  const retry = (await transferMoney(transferContext(intentId), input)) as any;
+  assert.equal(retry.status, 'requires_confirmation');
+  assert.notEqual(retry.approvalId, proposal.approvalId);
+});
+
+test('cancelling a proposal twice is idempotent', async () => {
+  seedApp();
+  resetApprovalBehavior();
+  const proposal = (await transferMoney(transferContext('intent-cancel-twice'), input)) as any;
+  const first = await cancelResponse(proposal.approvalId);
+  assert.equal(first.status, 200);
+  assert.deepEqual(await first.json(), { status: 'cancelled' });
+  const second = await cancelResponse(proposal.approvalId);
+  assert.equal(second.status, 200);
+  assert.deepEqual(await second.json(), { status: 'cancelled' });
+});
+
+test('cancelling another user\'s approval is not found', async () => {
+  seedApp();
+  resetApprovalBehavior();
+  const proposal = (await transferMoney(transferContext('intent-cancel-foreign'), input)) as any;
+  const response = await cancelResponse(proposal.approvalId, 'bruno');
+  assert.equal(response.status, 404);
+  // The owner can still confirm it: nothing was cancelled.
+  const row = appDb()
+    .prepare('SELECT cancelled_at FROM approvals WHERE id=?')
+    .get(proposal.approvalId) as any;
+  assert.equal(row.cancelled_at, null);
 });
 
 // --- Conversation loop closure: pending proposals in chat, receipt message ---
@@ -997,6 +1088,32 @@ test('closing a case is operator-only, persists, and rejects unknown or repeated
     'closed',
   );
   assert.equal((await close(open.id)).status, 409);
+});
+
+test('the migration adds cancelled_at to an existing approvals table', async () => {
+  // Recreate a database as it looked before the cancellation feature: an
+  // approvals table without the cancelled_at column.
+  closeAppDb();
+  for (const suffix of ['', '-wal', '-shm'])
+    fs.rmSync(path.join(temp, `app.sqlite${suffix}`), { force: true });
+  const { default: Database } = await import('better-sqlite3');
+  const old = new Database(path.join(temp, 'app.sqlite'));
+  old.exec(
+    'CREATE TABLE approvals(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,intent_id TEXT NOT NULL,payload TEXT NOT NULL,expires_at TEXT NOT NULL,consumed_at TEXT)',
+  );
+  old.close();
+  // Opening the app must migrate the pre-existing table without throwing.
+  const db = appDb();
+  const columns = db.prepare('PRAGMA table_info(approvals)').all() as Array<{ name: string }>;
+  assert.ok(columns.some((c) => c.name === 'cancelled_at'));
+  // Reopening must not attempt a second ALTER: the guard keeps it idempotent.
+  closeAppDb();
+  const reopened = appDb();
+  assert.ok(
+    (reopened.prepare('PRAGMA table_info(approvals)').all() as Array<{ name: string }>).some(
+      (c) => c.name === 'cancelled_at',
+    ),
+  );
 });
 
 after(() => {

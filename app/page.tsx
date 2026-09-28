@@ -413,6 +413,35 @@ export default function Home() {
   function dismissApproval(id: string) {
     setDismissedApprovals((list) => (list.includes(id) ? list : [...list, id]));
   }
+  // Discard cancels the proposal on the server, not just the local card: the
+  // entry must disappear from the dashboard panel and the conversation too.
+  async function cancelProposal(id: string) {
+    const g = generation.current;
+    try {
+      await api(`approvals/${id}/cancel`, {});
+      if (g !== generation.current) return;
+      if (pending?.approvalId === id) setPending(null);
+      dismissApproval(id);
+      setNotice('Proposal discarded. The transfer was not sent.');
+      await refresh(g);
+      await reloadConversation(g);
+    } catch (e) {
+      if (g !== generation.current) return;
+      const message = (e as Error).message;
+      if (/already confirmed/i.test(message)) {
+        // Confirmed elsewhere: it is done, so drop the card and refresh.
+        if (pending?.approvalId === id) setPending(null);
+        dismissApproval(id);
+        setNotice('This proposal was already confirmed.');
+        try {
+          await refresh(g);
+          await reloadConversation(g);
+        } catch {}
+      } else {
+        setError(message);
+      }
+    }
+  }
   function requestAgain(p: PendingProposal | null = pending) {
     const proposal = p?.proposal;
     if (!proposal) return;
@@ -809,7 +838,7 @@ export default function Home() {
                                   </button>
                                   <button
                                     className="secondary-button"
-                                    onClick={() => dismissApproval(a.id)}
+                                    onClick={() => cancelProposal(a.id)}
                                   >
                                     Discard
                                   </button>
@@ -832,7 +861,7 @@ export default function Home() {
                                   </button>
                                   <button
                                     className="secondary-button"
-                                    onClick={() => dismissApproval(a.id)}
+                                    onClick={() => cancelProposal(a.id)}
                                   >
                                     Discard
                                   </button>
@@ -994,7 +1023,7 @@ export default function Home() {
                                 </button>
                                 <button
                                   className="secondary-button"
-                                  onClick={() => setPending(null)}
+                                  onClick={() => cancelProposal(pending.approvalId)}
                                 >
                                   Discard
                                 </button>
@@ -1016,7 +1045,7 @@ export default function Home() {
                                 </button>
                                 <button
                                   className="secondary-button"
-                                  onClick={() => setPending(null)}
+                                  onClick={() => cancelProposal(pending.approvalId)}
                                 >
                                   Discard
                                 </button>
