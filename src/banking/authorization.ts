@@ -34,17 +34,65 @@ export async function authorizeTransfer(
   const db = appDb();
 
   // Agent-initiated: a proposal must be reviewed by the person before any
-  // dispatch. The lookup and insert run synchronously (no await between them),
-  // so a retry of the same intent reuses the same pending proposal.
+  // dispatch. The lookups and writes below run synchronously (no await between
+  // them), so concurrent agent turns cannot create duplicates either.
   if (!ctx.approvalId) {
-    const existing = pendingApprovalFor(db, ctx.intentId, ctx.userId);
-    if (existing)
-      return {
-        status: 'requires_confirmation',
-        approvalId: existing.id,
-        expiresAt: existing.expires_at,
-        proposal: input,
-      };
+    if (ctx.conversationId) {
+      // Reuse: an identical pending proposal in the same conversation is
+      // returned as-is (same approvalId, no new row), so a repeated identical
+      // request is idempotent even though every agent turn creates a new
+      // intent.
+      const identical = db
+        .prepare(
+          `SELECT a.* FROM approvals a JOIN intents i ON i.id=a.intent_id
+           WHERE i.conversation_id=? AND a.user_id=?
+             AND a.consumed_at IS NULL AND a.cancelled_at IS NULL
+             AND a.expires_at>? AND a.payload=?`,
+        )
+        .get(
+          ctx.conversationId,
+          ctx.userId,
+          new Date().toISOString(),
+          JSON.stringify(input),
+        ) as ApprovalRow | undefined;
+      if (identical)
+        return {
+          status: 'requires_confirmation',
+          approvalId: identical.id,
+          expiresAt: identical.expires_at,
+          proposal: input,
+        };
+      // Supersede: only one pending proposal per conversation survives. Other
+      // pending proposals of this conversation are cancelled silently with a
+      // direct UPDATE (this is not a user cancellation, so no chat message is
+      // recorded). The join scopes the update to this conversation only:
+      // approvals of other conversations — and of no conversation — are never
+      // touched.
+      db.prepare(
+        `UPDATE approvals SET cancelled_at=?
+         WHERE user_id=? AND consumed_at IS NULL AND cancelled_at IS NULL
+           AND expires_at>?
+           AND intent_id IN (SELECT id FROM intents WHERE conversation_id=?)`,
+      ).run(
+        new Date().toISOString(),
+        ctx.userId,
+        new Date().toISOString(),
+        ctx.conversationId,
+      );
+    } else {
+      // No conversation (e.g. the manual transfer form without an open chat):
+      // today's intent-scoped behaviour is kept. Limitation: without a
+      // conversation there is no scope to supersede, so proposals created
+      // here can pile up and are only cleaned up by expiry.
+      const existing = pendingApprovalFor(db, ctx.intentId, ctx.userId);
+      if (existing)
+        return {
+          status: 'requires_confirmation',
+          approvalId: existing.id,
+          expiresAt: existing.expires_at,
+          proposal: input,
+        };
+    }
     const approvalId = randomUUID();
     const expiresAt = new Date(Date.now() + APPROVAL_TTL_MS).toISOString();
     db.prepare(

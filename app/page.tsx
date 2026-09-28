@@ -1057,7 +1057,11 @@ export default function Home() {
                     })()}
                 </>
               )}
-              {dashboard.approvals?.length > 0 && (
+              {/* The approvals panel lives on the customer Overview only: the
+                  chat tab already renders its own inline confirmation cards
+                  for the open conversation, so showing the panel there too
+                  made proposals appear "outside the conversation". */}
+              {tab === 'overview' && !operator && dashboard.approvals?.length > 0 && (
                 <section className="panel approvals">
                   <h2>Proposals awaiting confirmation</h2>
                   {dashboard.approvals.map((a: AnyRecord) => {
