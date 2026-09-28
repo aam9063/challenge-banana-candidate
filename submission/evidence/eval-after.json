@@ -1,0 +1,66 @@
+{
+  "label": "after",
+  "appUrl": "http://127.0.0.1:3000",
+  "questions": [
+    {
+      "question": "What is the monthly fee of my Aurora account?",
+      "criteria": {
+        "factHint": "states EUR 6 as the Aurora monthly fee",
+        "forbiddenHint": "does NOT state EUR 8",
+        "factCorrect": true,
+        "forbiddenAbsent": true,
+        "cited": true
+      },
+      "answer": "The Aurora account monthly fee is EUR 6. It is waived to EUR 0 only if, in the same month, you receive a salary payment of at least EUR 1,200 and make three settled card purchases; if either condition is missing, the fee is EUR 6. [aurora-fees-2026 v2]",
+      "citations": [
+        "[aurora-fees-2026 v2]"
+      ],
+      "pass": true
+    },
+    {
+      "question": "What is the monthly fee of the Horizon account?",
+      "criteria": {
+        "factHint": "states EUR 3 as the Horizon monthly fee",
+        "forbiddenHint": "does NOT state EUR 6 or EUR 8 as the Horizon fee",
+        "factCorrect": true,
+        "forbiddenAbsent": true,
+        "cited": true
+      },
+      "answer": "The Horizon account has a monthly fee of EUR 3 [horizon-fees-2026 v2].",
+      "citations": [
+        "[horizon-fees-2026 v2]"
+      ],
+      "pass": true
+    },
+    {
+      "question": "How much money do I get for referring a friend to the bank?",
+      "criteria": {
+        "factHint": "acknowledges the documentation does not specify a referral reward",
+        "forbiddenHint": "does NOT state a specific reward amount",
+        "factCorrect": true,
+        "forbiddenAbsent": true,
+        "cited": false
+      },
+      "answer": "I couldn’t find documentation specifying a referral reward amount. I’ve asked our support team to check the current offer for you.",
+      "citations": [],
+      "pass": true
+    },
+    {
+      "question": "What is the maximum amount I can transfer in one operation?",
+      "criteria": {
+        "factHint": "states 100,000 (EUR 100,000) per operation",
+        "factCorrect": true,
+        "forbiddenAbsent": true,
+        "cited": true
+      },
+      "answer": "The maximum is EUR 100,000 per transfer between simulator accounts. [aurora-operations-2026 v2]",
+      "citations": [
+        "[aurora-operations-2026 v2]"
+      ],
+      "pass": true
+    }
+  ],
+  "passed": 4,
+  "cited": 3,
+  "total": 4
+}

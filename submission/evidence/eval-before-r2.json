@@ -1,0 +1,278 @@
+{
+  "label": "before-r2",
+  "appUrl": "http://127.0.0.1:3010",
+  "repeats": 2,
+  "questions": [
+    {
+      "question": "What is the monthly fee of my Aurora account?",
+      "criteria": {
+        "factHint": "states EUR 6 as the Aurora monthly fee",
+        "forbiddenHint": "does NOT state EUR 8"
+      },
+      "runs": [
+        {
+          "answer": "The Aurora account’s monthly fee is €6. It’s waived for a month only if you receive at least €1,200 in salary **and** make three settled card purchases that month. A transfer from your own account doesn’t count as salary.",
+          "citations": [],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": false
+          },
+          "pass": false
+        },
+        {
+          "answer": "The Aurora account’s monthly fee is **€6**. It’s waived for a month only if you receive at least **€1,200 in salary** and make **three settled card purchases** during that same month.",
+          "citations": [],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": false
+          },
+          "pass": false
+        }
+      ],
+      "passCount": 0,
+      "citedCount": 0,
+      "repeats": 2
+    },
+    {
+      "question": "What is the monthly fee of the Horizon account?",
+      "criteria": {
+        "factHint": "states EUR 3 as the Horizon monthly fee",
+        "forbiddenHint": "does NOT state EUR 6 or EUR 8 as the Horizon fee"
+      },
+      "runs": [
+        {
+          "answer": "The Horizon account has a monthly fee of **€3**.",
+          "citations": [],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": false
+          },
+          "pass": false
+        },
+        {
+          "answer": "The Horizon account has a monthly fee of **€3**. It applies per calendar month and isn’t waived when you receive a transfer between your own accounts.",
+          "citations": [],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": false
+          },
+          "pass": false
+        }
+      ],
+      "passCount": 0,
+      "citedCount": 0,
+      "repeats": 2
+    },
+    {
+      "question": "How much money do I get for referring a friend to the bank?",
+      "criteria": {
+        "factHint": "acknowledges the documentation does not specify a referral reward",
+        "forbiddenHint": "does NOT state a specific reward amount"
+      },
+      "runs": [
+        {
+          "answer": "I couldn’t find a published referral reward amount in the available bank information, so I can’t confirm how much you’d receive. Please contact Banana Bank support to check whether a referral offer is currently available and what its terms are.",
+          "citations": [],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": false
+          },
+          "pass": true
+        },
+        {
+          "answer": "I couldn’t verify a current referral reward amount in the available information, so I don’t want to guess. I’ve opened a support case to confirm the offer and eligibility: **4c83b5c3-1149-49d2-b987-63011a0414b7**.",
+          "citations": [],
+          "criteria": {
+            "factCorrect": false,
+            "forbiddenAbsent": true,
+            "cited": false
+          },
+          "pass": false
+        }
+      ],
+      "passCount": 1,
+      "citedCount": 0,
+      "repeats": 2
+    },
+    {
+      "question": "What is the maximum amount I can transfer in one operation?",
+      "criteria": {
+        "factHint": "states 100,000 (EUR 100,000) per operation"
+      },
+      "runs": [
+        {
+          "answer": "The maximum is **€100,000 per transfer**, subject to available funds and authorization. Foreign-currency transfers aren’t available in this application.",
+          "citations": [],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": false
+          },
+          "pass": false
+        },
+        {
+          "answer": "The maximum is **€100,000 per transfer**. Foreign-currency transfers aren’t available in this application.",
+          "citations": [],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": false
+          },
+          "pass": false
+        }
+      ],
+      "passCount": 0,
+      "citedCount": 0,
+      "repeats": 2
+    },
+    {
+      "question": "What is the monthly fee of the Cloud account?",
+      "criteria": {
+        "factHint": "states EUR 0 as the Cloud monthly fee",
+        "forbiddenHint": "does NOT state EUR 2, EUR 5 or EUR 6 as the Cloud fee"
+      },
+      "runs": [
+        {
+          "answer": "The Cloud account has no monthly fee (€0), effective September 1, 2026.",
+          "citations": [],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": false
+          },
+          "pass": false
+        },
+        {
+          "answer": "The Cloud account has no monthly fee (€0), according to the current policy effective September 1, 2026.",
+          "citations": [],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": false
+          },
+          "pass": false
+        }
+      ],
+      "passCount": 0,
+      "citedCount": 0,
+      "repeats": 2
+    },
+    {
+      "question": "What is the monthly fee of the Community account?",
+      "criteria": {
+        "factHint": "states EUR 2 as the Community monthly fee",
+        "forbiddenHint": "does NOT state EUR 0, EUR 5 or EUR 6 as the Community fee"
+      },
+      "runs": [
+        {
+          "answer": "The Community account’s monthly fee is **€2**, charged per calendar month.",
+          "citations": [],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": false
+          },
+          "pass": false
+        },
+        {
+          "answer": "The Community account’s monthly fee is €2 per calendar month. It isn’t waived by receiving a transfer between your own accounts.",
+          "citations": [],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": false
+          },
+          "pass": false
+        }
+      ],
+      "passCount": 0,
+      "citedCount": 0,
+      "repeats": 2
+    },
+    {
+      "question": "What is the monthly fee of the Family account?",
+      "criteria": {
+        "factHint": "states EUR 5 as the Family monthly fee",
+        "forbiddenHint": "does NOT state EUR 0, EUR 2 or EUR 6 as the Family fee"
+      },
+      "runs": [
+        {
+          "answer": "The Family account’s monthly fee is €5. It applies per calendar month.",
+          "citations": [],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": false
+          },
+          "pass": false
+        },
+        {
+          "answer": "The Family account has a monthly fee of **€5**. It applies per calendar month and isn’t waived by receiving a transfer between your own accounts.",
+          "citations": [],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": false
+          },
+          "pass": false
+        }
+      ],
+      "passCount": 0,
+      "citedCount": 0,
+      "repeats": 2
+    }
+  ],
+  "total": 7,
+  "totalTurns": 14,
+  "passed": 1,
+  "cited": 0,
+  "perQuestion": [
+    {
+      "question": "What is the monthly fee of my Aurora account?",
+      "passCount": 0,
+      "citedCount": 0,
+      "repeats": 2
+    },
+    {
+      "question": "What is the monthly fee of the Horizon account?",
+      "passCount": 0,
+      "citedCount": 0,
+      "repeats": 2
+    },
+    {
+      "question": "How much money do I get for referring a friend to the bank?",
+      "passCount": 1,
+      "citedCount": 0,
+      "repeats": 2
+    },
+    {
+      "question": "What is the maximum amount I can transfer in one operation?",
+      "passCount": 0,
+      "citedCount": 0,
+      "repeats": 2
+    },
+    {
+      "question": "What is the monthly fee of the Cloud account?",
+      "passCount": 0,
+      "citedCount": 0,
+      "repeats": 2
+    },
+    {
+      "question": "What is the monthly fee of the Community account?",
+      "passCount": 0,
+      "citedCount": 0,
+      "repeats": 2
+    },
+    {
+      "question": "What is the monthly fee of the Family account?",
+      "passCount": 0,
+      "citedCount": 0,
+      "repeats": 2
+    }
+  ]
+}
