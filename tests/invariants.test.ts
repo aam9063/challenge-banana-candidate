@@ -332,7 +332,7 @@ type FakeBankResponse = { status: number; payload?: unknown };
  * idempotency key is actor+reference; behaviors decide when effects commit.
  */
 function startFakeBank() {
-  const requests: Array<{ method: string; path: string; body: any }> = [];
+  const requests: Array<{ method: string; path: string; actor: string; body: any }> = [];
   const operations = new Map<string, any>();
   const behavior = {
     transfer: null as
@@ -343,6 +343,7 @@ function startFakeBank() {
           replay: boolean,
         ) => FakeBankResponse),
     lookup: null as null | ((reference: string) => FakeBankResponse),
+    operator: null as null | (() => FakeBankResponse),
   };
   const server = http.createServer((req, res) => {
     let raw = '';
@@ -352,6 +353,7 @@ function startFakeBank() {
       requests.push({
         method: req.method ?? '',
         path: requestPath,
+        actor: String(req.headers['x-bank-actor'] ?? ''),
         body: raw ? JSON.parse(raw) : undefined,
       });
       const respond = ({ status, payload }: FakeBankResponse) => {
@@ -404,6 +406,25 @@ function startFakeBank() {
         return operation
           ? respond({ status: 200, payload: operation })
           : respond({ status: 404, payload: { error: 'Not found.' } });
+      }
+      if (req.method === 'GET' && requestPath.startsWith('/v1/operator/customer')) {
+        if (behavior.operator) return respond(behavior.operator());
+        const customer = new URL(requestPath, 'http://bank.local').searchParams.get('id') ?? '';
+        return respond({
+          status: 200,
+          payload: {
+            accounts: [
+              {
+                id: `acc-${customer}`,
+                userId: customer,
+                label: 'Everyday',
+                iban: 'ES91 0000 0000 0000',
+                balanceCents: 50000,
+              },
+            ],
+            operations: [...operations.values()].filter((o) => o.userId === customer),
+          },
+        });
       }
       return respond({ status: 404, payload: { error: 'Unknown endpoint.' } });
     });
@@ -535,6 +556,7 @@ test('an unverifiable outcome stays processing and is never reported failed', as
 const resetApprovalBehavior = () => {
   fakeBank.behavior.transfer = null;
   fakeBank.behavior.lookup = null;
+  fakeBank.behavior.operator = null;
 };
 const transferPosts = () =>
   fakeBank.requests.filter((r) => r.method === 'POST' && r.path === '/v1/transfers').length;
@@ -644,6 +666,172 @@ test('confirming an approval whose stored payload was tampered with is rejected 
       e instanceof HttpError && e.status === 409 && /does not match/i.test(e.message),
   );
   assert.equal(transferPosts(), 0);
+});
+
+// --- Operator visibility: telemetry, case detail, case closure ---
+const insertMessage = (
+  id: string,
+  conversationId: string,
+  role: string,
+  content: string,
+  createdAt: string,
+) =>
+  appDb()
+    .prepare('INSERT INTO messages VALUES(?,?,?,?,?,?)')
+    .run(id, conversationId, role, content, createdAt, null);
+
+const insertEvent = (
+  id: string,
+  conversationId: string,
+  kind: string,
+  data: unknown,
+  createdAt: string,
+) =>
+  appDb()
+    .prepare('INSERT INTO events VALUES(?,?,?,?,?,?,?)')
+    .run(id, `run-${id}`, 'lucia', conversationId, kind, JSON.stringify(data), createdAt);
+
+const insertIncident = (
+  id: string,
+  conversationId: string,
+  status: string,
+) =>
+  appDb()
+    .prepare('INSERT INTO incidents VALUES(?,?,?,?,?,?)')
+    .run(id, 'lucia', conversationId, 'Transfer help', status, new Date().toISOString());
+
+test('recordEvent persists the full telemetry payload, not just tool and status', async () => {
+  seedApp();
+  const { recordEvent } = await import('../src/telemetry');
+  recordEvent(
+    { userId: 'lucia', conversationId: 'conv-telemetry', runId: 'run-telemetry', intentId: 'intent-telemetry' },
+    'tool.completed',
+    {
+      tool: 'transfer_money',
+      status: 'completed',
+      arguments: { fromAccountId: 'acc-lucia', amountCents: 1000 },
+      output: { status: 'requires_confirmation', approvalId: 'ap-1' },
+      durationMs: 42,
+    },
+  );
+  const row = appDb()
+    .prepare('SELECT * FROM events WHERE run_id=?')
+    .get('run-telemetry') as any;
+  const data = JSON.parse(row.data);
+  assert.equal(data.tool, 'transfer_money');
+  assert.equal(data.status, 'completed');
+  assert.deepEqual(data.arguments, { fromAccountId: 'acc-lucia', amountCents: 1000 });
+  assert.deepEqual(data.output, { status: 'requires_confirmation', approvalId: 'ap-1' });
+  assert.equal(data.durationMs, 42);
+});
+
+test('caseDetail returns real conversation evidence and bank operations via the operator endpoint', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  const conversationId = 'conv-case-detail';
+  appDb()
+    .prepare('INSERT INTO conversations VALUES(?,?,?,?)')
+    .run(conversationId, 'lucia', 'Case detail', new Date().toISOString());
+  insertMessage('msg-cd-2', conversationId, 'assistant', 'Let me check that for you.', '2026-01-01T10:01:00.000Z');
+  insertMessage('msg-cd-1', conversationId, 'user', 'I sent money but it disappeared.', '2026-01-01T10:00:00.000Z');
+  // Inserted last on purpose: ordering must follow created_at, not rowid.
+  insertEvent('evt-cd-1', conversationId, 'tool.started', { tool: 'transfer_money', status: 'started', arguments: { amountCents: 100 } }, '2026-01-01T10:02:00.000Z');
+  insertEvent('evt-cd-2', conversationId, 'tool.completed', { tool: 'transfer_money', status: 'completed', arguments: { amountCents: 100 }, output: { status: 'requires_confirmation' }, durationMs: 7 }, '2026-01-01T10:02:01.000Z');
+  appDb()
+    .prepare('INSERT INTO intents VALUES(?,?,?,?,?,?,?,?,?,?)')
+    .run('intent-cd', 'lucia', conversationId, 'run-cd', JSON.stringify(input), 'completed', 'ref-cd', 'op-cd', null, '2026-01-01T10:02:02.000Z');
+  insertIncident('incident-cd', conversationId, 'open');
+  fakeBank.operations.set('ref-cd', {
+    id: 'op-cd',
+    userId: 'lucia',
+    reference: 'ref-cd',
+    amountCents: 100,
+    concept: 'Test',
+    createdAt: '2026-01-01T10:02:03.000Z',
+    status: 'completed',
+  });
+  const { caseDetail } = await import('../src/operator/view');
+  const detail = await caseDetail('marta', 'incident-cd');
+  assert.deepEqual(
+    (detail.history as any[]).map((m) => m.id),
+    ['msg-cd-1', 'msg-cd-2'],
+  );
+  assert.equal(detail.history[0].content, 'I sent money but it disappeared.');
+  assert.deepEqual(
+    (detail.events as any[]).map((e) => e.id),
+    ['evt-cd-1', 'evt-cd-2'],
+  );
+  assert.equal(detail.events[1].data.durationMs, 7);
+  assert.equal(detail.events[1].data.arguments.amountCents, 100);
+  assert.equal(detail.intents.length, 1);
+  assert.equal(detail.intents[0].bank_reference, 'ref-cd');
+  assert.deepEqual(detail.intents[0].payload, input);
+  assert.ok(detail.bank);
+  assert.equal(detail.bank.operations.length, 1);
+  assert.equal(detail.bank.operations[0].amountCents, 100);
+  assert.equal(detail.bank.operations[0].reference, 'ref-cd');
+  assert.equal(detail.bank.operations[0].status, 'completed');
+  assert.equal(detail.gaps, '');
+  const operatorRequest = fakeBank.requests.find((r) =>
+    r.path.startsWith('/v1/operator/customer'),
+  );
+  assert.ok(operatorRequest);
+  assert.equal(operatorRequest.actor, 'marta');
+  assert.match(operatorRequest.path, /id=lucia/);
+});
+
+test('caseDetail reports honest gaps instead of inventing evidence', async () => {
+  seedApp();
+  resetApprovalBehavior();
+  const conversationId = 'conv-gaps';
+  appDb()
+    .prepare('INSERT INTO conversations VALUES(?,?,?,?)')
+    .run(conversationId, 'lucia', 'No activity', new Date().toISOString());
+  insertMessage('msg-gaps-1', conversationId, 'user', 'Where is my money?', '2026-01-01T11:00:00.000Z');
+  insertIncident('incident-gaps', conversationId, 'open');
+  const { caseDetail } = await import('../src/operator/view');
+  // No recorded events and the bank is unreachable: gaps, never fabricated rows.
+  fakeBank.behavior.operator = () => ({ status: 503 });
+  try {
+    const detail = await caseDetail('marta', 'incident-gaps');
+    assert.equal(detail.events.length, 0);
+    assert.equal(detail.bank, null);
+    assert.match(detail.gaps, /no agent activity/i);
+    assert.match(detail.gaps, /bank operations could not be retrieved/i);
+  } finally {
+    fakeBank.behavior.operator = null;
+  }
+});
+
+test('closing a case is operator-only, persists, and rejects unknown or repeated closures', async () => {
+  seedApp();
+  const { POST } = await import('../app/api/[...path]/route');
+  const close = (incidentId: string, user = 'marta') =>
+    POST(
+      new Request(`http://localhost/api/incidents/${incidentId}/close`, {
+        method: 'POST',
+        headers: { cookie: `banana_actor=${sessionToken(user)}` },
+      }),
+      { params: Promise.resolve({ path: ['incidents', incidentId, 'close'] }) },
+    );
+  assert.equal((await close('incident-missing')).status, 404);
+  const open = appDb()
+    .prepare("SELECT id FROM incidents WHERE status='open' LIMIT 1")
+    .get() as any;
+  const response = await close(open.id, 'lucia');
+  assert.equal(response.status, 403);
+  const ok = await close(open.id);
+  assert.equal(ok.status, 200);
+  assert.equal((await ok.json()).status, 'closed');
+  assert.equal(
+    (
+      appDb().prepare('SELECT status FROM incidents WHERE id=?').get(open.id) as any
+    ).status,
+    'closed',
+  );
+  assert.equal((await close(open.id)).status, 409);
 });
 
 after(() => {

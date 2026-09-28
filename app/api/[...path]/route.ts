@@ -164,6 +164,14 @@ async function handler(request: Request, context: RouteContext) {
       if (current.role !== 'operator') throw new HttpError(403, 'Operator role required.');
       if (!path[1])
         return json(db.prepare('SELECT * FROM incidents ORDER BY created_at DESC').all());
+      if (path[2] === 'close' && request.method === 'POST') {
+        const incident = db.prepare('SELECT * FROM incidents WHERE id=?').get(path[1]) as any;
+        if (!incident) throw new HttpError(404, 'Case not found.');
+        if (incident.status === 'closed')
+          throw new HttpError(409, 'This case is already closed.');
+        db.prepare("UPDATE incidents SET status='closed' WHERE id=?").run(path[1]);
+        return json(db.prepare('SELECT * FROM incidents WHERE id=?').get(path[1]));
+      }
       return json(await caseDetail(current.id, path[1]));
     }
     if (path[0] === 'documents') {
