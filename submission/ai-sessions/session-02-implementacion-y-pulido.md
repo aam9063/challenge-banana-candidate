@@ -170,6 +170,16 @@ DOUBLE DEBIT CONFIRMED: one €1.00 intention debited €3.00.
 
 **Verificación**: 3 tests nuevos con TDD (RED observado) → **40/40**; en vivo: doble cancel → **un solo** mensaje *"Transfer cancelled: EUR 4.50 from your Aurora account to Bruno Vidal's Horizon account (concept: parent cancel msg) was not sent. No money has moved."* y `pendingApprovals` a 0.
 
+## Fase 9 — El agente prometía una confirmación que no creaba
+
+**Contexto**: el usuario reportó que al pedir una transferencia ya no aparecía la tarjeta. Diagnóstico (inicialmente con el observable equivocado, corregido después): en la conversación `d36672a7` la tabla `events` muestra **solo `list_accounts`** — cero eventos `transfer_money`, cero intents. El modelo respondió en prosa (*"I can send €1.00… Please confirm these details before I proceed"*) sin llamar a la herramienta, así que no existía propuesta y no había tarjeta. Causa: la reescritura evidencia-first explicaba qué hacer **después** de `requires_confirmation`, pero no exigía **crearla**.
+
+**Corrección de método importante**: el asistente había citado como evidencia "no hubo `POST /api/actions`" — pero ese endpoint es el del **formulario manual**; las tool calls del agente ocurren in-process dentro de `sendMessage` y no generan HTTP. El observable correcto es la tabla `events` (telemetría `tool.started`/`tool.completed`). Lección registrada: verificar el canal real de la evidencia antes de afirmar la causa.
+
+**Arreglo**: reglas imperativas en `prompt.ts` (llamar a `transfer_money` en el mismo turno cuando monto/origen/destino se conocen; prohibido presentar un resumen en prosa como propuesta; preguntar solo si falta un dato real; `requires_confirmation` = no enviada y la tarjeta aparece del resultado del tool; citas solo para documentación) + una línea en el suffix de `run.ts`.
+
+**Verificación propia (observable = `events`)**: petición completa → `list_accounts` → `transfer_money` → `requires_confirmation` con `approvalId`, 1 intent, `pendingApprovals` = 1 en la conversación, y respuesta que guía a la tarjeta. Worker: 2/2 en peticiones completas, 2/3 preguntando la cuenta cuando es ambigua (y siempre creando la propuesta en el turno siguiente). **40/40 tests.**
+
 ## Decisiones transversales y su porqué
 
 | Decisión | Porqué |
