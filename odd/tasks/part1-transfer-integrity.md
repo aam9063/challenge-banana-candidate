@@ -8,7 +8,7 @@ Garantizar que una intención de transferencia produce **exactamente un** débit
 
 ## Tareas
 
-- [ ] 1. Reproducir el doble débito con perfil `lost-response` (evidencia before/after guardada en `submission/work-log.md` y script `scripts/repro-double-debit.ts`).
+- [x] 1. Reproducir el doble débito con perfil `lost-response` (evidencia before/after guardada en `submission/work-log.md` y script `scripts/repro-double-debit.ts`). CONFIRMADO: €1.00 → €3.00 (triple débito).
 - [ ] 2. Fix: reference estable por intent en `dispatch.ts` (no regenerar en reintentos; no sobrescribir `intents.bank_reference`).
 - [ ] 3. Fix: no re-despachar intents con estado `completed`/`processing` en `actions.ts` (verificar status del intent).
 - [ ] 4. Fix: reconciliación del resultado desconocido tras 504/timeout vía `GET /v1/operations/:reference` (`operation_status`) antes de marcar failed.
@@ -17,8 +17,8 @@ Garantizar que una intención de transferencia produce **exactamente un** débit
 
 ## Evidencia
 
-- Repro before: (pendiente)
-- Commits: (pendiente)
+- Repro before: una intención de €1,00 (acc-lucia → acc-bruno) debitó €3,00. App reportó `completed` en ambos intentos mientras el saldo real caía €2,00 y luego €1,00 más. Ver `submission/work-log.md` §2.
+- Commits: `404847c` (chore: scaffolding + repro), fix en curso en rama `fix/transfer-idempotency`.
 
 ## Notas
 

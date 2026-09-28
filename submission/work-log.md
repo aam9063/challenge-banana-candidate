@@ -77,16 +77,35 @@ DOUBLE DEBIT CONFIRMED: one €1.00 intention debited €3.00.
 
 Nota: la app informó `completed` en ambos casos; el saldo real solo se ve en el banco. El estado reportado no refleja hechos verificados.
 
-### Arreglo (diseño)
+### Arreglo (implementado)
 
 **Core: una reference por intent, para siempre.** El banco garantiza que reusar `actor+reference` con payload idéntico devuelve la operación original (`replay:true`) — eso convierte cualquier reintento (interno o de intent) en una consulta segura:
 
-1. `dispatch.ts`: generar la reference solo si `intents.bank_reference` es null; persistirla y **reusarla en cada intento**. El retry interno con la misma reference recibe replay de la operación ya comprometida.
-2. `actions.ts`: si el intent existe con estado `completed` → devolver el resultado almacenado sin despachar. Si `processing` → no re-despachar; informar estado en verificación. Solo `created`/`failed` re-despachan, **siempre con la misma reference**.
-3. Reconciliación: tras 504/timeout, consultar `GET /v1/operations/:reference`; si existe → `completed` (hecho verificado); si falla también la consulta → estado intermedio `unknown`/`processing` (nunca `failed` sin evidencia).
+1. `src/banking/dispatch.ts` — nueva función `stableReference(intentId)`: lee `intents.bank_reference`, genera UUID solo si es null y lo persiste una vez. Tanto el retry interno (ambos intentos comparten reference) como el re-despacho entre llamadas lo reutilizan.
+2. `src/banking/actions.ts` — gates por estado del intent:
+   - `completed` → devuelve el resultado almacenado (enriquecido con la operación real vía `GET /v1/operations/:reference`); nunca re-despacha.
+   - `processing` → reconcilia vía `GET /v1/operations/:reference`; nunca re-despacha.
+   - `created`/`failed` → procede, siempre con la reference almacenada.
+   - Helper compartido `reconcileOutcome`: operación encontrada → `completed` (hecho verificado); 404 → `failed` (ausencia verificada); fallo de la consulta → estado no terminal `processing` con la reference para verificar después. **Nunca reporta `failed` sin evidencia.**
+3. `tests/invariants.test.ts` — 4 tests de regresión con un banco fake in-process (sin servicios vivos), escritos test-first (RED observado antes del fix): lost-response debita exactamente una vez; rechazo antes del commit → `failed` verificado; commit inalcanzable → recuperado a `completed`; resultado inverificable → `processing` y el reintento nunca re-despacha.
 
-### Verificación (after)
+### Verificación (after) — CONFIRMADA
 
-(pendiente)
+- `npm run typecheck` ✅ · `npm test` → **17/17** (13 originales + 4 nuevos) ✅
+- Repro end-to-end con el mismo script y perfil `lost-response`:
+
+```text
+balance before:              €4002.50
+[1st attempt, same intentId] app status: completed
+balance after 1st attempt:   €4001.50  (delta -€1.00)
+[retry, same intentId]       app status: completed
+balance after retry:         €4001.50  (delta -€1.00)
+=== VERDICT ===
+No double debit observed (fixed?).
+```
+
+- Transferencia normal bajo perfil `normal`: `completed`, delta exacto de 100 céntimos (sin regresión).
+
+**Before/after**: €1,00 de intención → €3,00 debitados y estados engañosos **antes**; €1,00 debitado exactamente una vez, reintento sin efectos adicionales y estado siempre verificado **después**.
 
 ---

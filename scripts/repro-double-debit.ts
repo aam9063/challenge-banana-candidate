@@ -11,6 +11,9 @@
  * they are only used to configure the documented failure profile.
  */
 const BASE = process.env.APP_URL ?? 'http://127.0.0.1:3000';
+
+// Mark this file as a module so its top-level await typechecks under tsc.
+export {};
 const BANK_ADMIN = process.env.BANK_ADMIN_SECRET ?? 'banana-local-admin';
 const BANK_URL = process.env.BANK_URL ?? 'http://127.0.0.1:4001';
 const AMOUNT = 100; // 1.00 EUR
