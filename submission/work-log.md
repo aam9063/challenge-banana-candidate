@@ -6,10 +6,46 @@
 
 ## Índice
 
+0. [Mapa contrato → bug → arreglo → evidencia](#0-mapa-contrato--bug--arreglo--evidencia)
+0b. [Evidencia del starter: casos sembrados](#0b-evidencia-del-starter-casos-sembrados)
 1. [Setup y diagnóstico de instalación](#1-setup-y-diagnóstico-de-instalación)
 2. [Bug 1: Doble débito en reintentos de transferencia](#2-bug-1-doble-débito-en-reintentos-de-transferencia)
 3. [Bug 2: Documentación caducada en las respuestas](#3-bug-2-documentación-caducada-en-las-respuestas-del-asistente)
 4. [Parte 2: Trust Layer](#4-parte-2--trust-layer-feature-distintiva)
+
+---
+
+## 0. Mapa contrato → bug → arreglo → evidencia
+
+Las cláusulas de negocio de `docs/contracts.md` y el defecto correspondiente en el starter. Cada uno con reproducción, arreglo y verificación.
+
+| Cláusula de `contracts.md` | Bug encontrado | Reproducción / evidencia | Arreglo | Verificación |
+|---|---|---|---|---|
+| *"An operation intent represents a customer intention. Retrying that intent must not multiply its effects."* | Reference nueva por intento → el dinero se movía **3 veces** | `scripts/repro-double-debit.ts` (perfil `lost-response`): intención de €1,00 → **€3,00** debitados | `8056774`: `stableReference()` por intent + gates de estado + reconciliación | Repro impreso: delta exacto **−€1,00**, reintento sin efectos · 4 tests |
+| *"A transport error or timeout does not prove that the bank rejected the operation. Customer-facing status should match verified facts."* | Un 504 marcaba `failed` aunque el banco hubiera commitido | Mismo repro + perfil `slow-response`/`lost-response`; `client.ts` convertía todo timeout en 504 sin verificar | `8056774`: `reconcileOutcome()` (encontrada→completed · 404→failed verificado · consulta falla→`processing` no terminal con reference) | 3 tests (recuperado por reconciliación; inverificable nunca `failed`) |
+| *"A sensitive operation must present its amount, source, and destination for explicit review before execution. An informational conversation alone does not authorize payment."* | `authorizeTransfer` devolvía siempre `null`: el flujo de aprobaciones era código muerto y el agente transfería desde el chat | Caso sembrado **Elena** (`fixtures/conversations.json`): *"Before deciding whether to send EUR 25 to Hugo…"* → **"Transfer completed."** | `1b1099a`: propuesta explícita (10 min) + consumo atómico + checks 409/410; `fcd0405`: cancelación real; `221ecf7`: el agente debe crear la propuesta con el tool; `b6b953e`: una propuesta por conversación | 10 tests (propuesta sin débito, doble confirm 409, expirada 410, payload alterado 409, supersede, reutilización) + E2E en vivo |
+| *"Assistant information should rely on applicable documentation and make its evidence traceable. Missing evidence should be acknowledged with a useful next step. Documents can contain historical versions."* | Prompt que invitaba a inventar (`concrete estimate`, `references are not required`) + metadatos solo en el primer chunk + sin filtro de vigencia | Casos sembrados **Inés** (*"It is common to receive EUR 30 for a referral"*) y **Carla** (comisión correcta pero **sin cita**); corpus con `archive-aurora-*` (EUR 8) compitiendo con el vigente (EUR 6) | `38fc5ed`: metadatos en todos los chunks + filtro de vigencia (2026-09-24) + re-ingesta; `53d3333`: citas obligatorias `[docId vN]`, prohibido estimar, sin evidencia → admitirlo + siguiente paso | 4 tests de vigencia/cita + búsqueda en vivo sin `archive-*` + preguntas en vivo citando `[aurora-fees-2026 v2]` |
+| *"Operators need to understand the conversation, relevant steps, and effects. Historical evidence that was never recorded must not be invented."* | `caseDetail` con `history/events/intents/bank` hardcodeados; `recordEvent` descartaba args/salidas; los casos no se podían cerrar | Código + verificación en vivo: la vista del operador no mostraba nada de lo ocurrido | `691c5b1`: telemetría íntegra, detalle del caso poblado (incl. `GET /v1/operator/customer`), `gaps` honestos, cierre de caso; `c730b02`/`959c4c5`: recibo de confirmación y registro de cancelación en el hilo | 4 tests + E2E con caso real: 8 eventos con `arguments/output/durationMs`, operación con reference, cierre y 409 al repetir |
+| *"Only an account holder may initiate a transfer from that account. Operators cannot transfer customer money."* | (Sin defecto encontrado) el check de titularidad existía y el rol se validaba | Revisión de `authorization.ts` / `tools.ts` | Sin cambios | Tests de rol existentes |
+| *"Amounts are positive integer euro cents, without overdrafts. Maximum per operation: 10,000,000 cents."* | (Sin defecto encontrado) validación zod activa | Revisión de `transferSchema` | Sin cambios | Tests existentes |
+
+**Lectura para la evaluación**: los cinco defectos materiales del starter se corresponden con cláusulas explícitas del contrato; dos cláusulas (titularidad/roles y límites de importe) ya se cumplían y se verificaron para descartarlas.
+
+---
+
+## 0b. Evidencia del starter: casos sembrados
+
+`fixtures/conversations.json` contiene 47 conversaciones narrativas que **demuestran los bugs dentro del propio starter** — evidencia ideal para el video (el "antes" no lo fabricamos nosotros; viene con el proyecto):
+
+| Cliente | Conversación | Contenido sembrado | Cláusula violada |
+|---|---|---|---|
+| **Elena** | *Payment planning* | *"Before deciding whether to send EUR 25 to Hugo, what would I need to review?"* → **"Transfer completed."** | Confirmación explícita: una pregunta informativa "ejecutó" un pago |
+| **Diego** | *Transfer enquiry* | *"I want to send EUR 200 to Inés"* → *"The operation could not be completed."* | Estado no verificado / sin evidencia |
+| **Inés** | *Rewards question* | *"It is common to receive EUR 30 for a referral."* | Alucinación: los documentos **no** especifican referidos (`context-guide-*`) |
+| **Carla** | *Account information* | *"The Aurora monthly fee is EUR 6."* (correcto pero **sin cita**) | Evidencia trazable ausente |
+| **Lucía** | *Dinner payment* | *"I could not complete the transfer. You can try again."* | Estado no verificado |
+
+Con los arreglos, estos mismos casos cambian de comportamiento: Elena recibe una propuesta a confirmar (no un "completed" falso), Inés escucha que no hay documentación aplicable y se le ofrece un siguiente paso, Carla recibe la comisión **con cita y versión**, y Diego/Lucía obtienen un estado verificado contra el banco.
 
 ---
 
