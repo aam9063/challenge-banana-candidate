@@ -182,6 +182,17 @@ Una capa de confianza sobre el asistente que cubre dos contratos incumplidos a l
 - Transferencia `requires_confirmation` → el agente explica que **no** se ejecutó y pide confirmar en el panel.
 - Chips de cita accesibles (aria-label) que abren el documento citado.
 
+### Pulido de UX (rama `feature/confirmation-ux`, commit `4236adf`)
+
+**Hallazgo en la primera sesión real de UI**: el flujo funcionaba correctamente (4 propuestas confirmadas y ejecutadas exactamente una vez), pero la propuesta aparecía solo en el panel inferior, fuera de vista, sin indicar su caducidad — la transferencia parecía "colgada". Mejoras aplicadas (solo `app/page.tsx`):
+
+- **Tarjeta inline** bajo el formulario de transferencia (monto, origen→destino con nombres, concepto) con Confirm y Discard, y auto-scroll al aparecer.
+- **Cuenta atrás en vivo** (m:ss) en la tarjeta y en cada propuesta del panel.
+- **Estado expirado** con botón "Request again" que re-llena el formulario con los mismos datos.
+- Outcomes explícitos: éxito limpia la tarjeta; "already confirmed" limpia y refresca; "expired" pasa a modo re-petición.
+
+Esto también es material de video: muestra el ciclo completo **feedback real → diagnóstico con evidencia (DB + logs) → mejora de producto**.
+
 ### Demo script para el video (guión sugerido)
 
 1. **Cita verificable**: "What is the monthly fee of the Aurora account and when is it waived?" → respuesta con chip `[aurora-fees-2026 v2]` → click → abre el documento en la biblioteca. (Verificado: la respuesta cita condiciones exactas — €6/mes, exención con salario ≥€1.200 + 3 compras.)
