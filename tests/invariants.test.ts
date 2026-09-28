@@ -15,7 +15,11 @@ const { seedApp } = await import('../src/seed');
 const { appDb, closeAppDb } = await import('../src/db');
 const { actor, sessionToken, sameOrigin } = await import('../src/auth');
 const { documents, readDocument } = await import('../src/ingestion/pipeline');
-const { allChunks } = await import('../src/retrieval/store');
+const { chunkDocument } = await import('../src/ingestion/chunker');
+const { allChunks, replaceChunks } = await import('../src/retrieval/store');
+const { searchDocuments } = await import('../src/retrieval/search');
+const { embeddingKey, vectorBuffer, dimensions } = await import('../src/retrieval/embeddings');
+import type { Chunk, DocumentRecord } from '../src/types';
 const input = {
   fromAccountId: 'acc-lucia',
   toAccountId: 'acc-bruno',
@@ -188,6 +192,76 @@ test('corpus originals exist and have unique sources', () => {
   assert.ok(docs.some((d) => d.validTo));
   assert.ok(docs.every((d) => readDocument(d).length > 1000));
 });
+test('every chunk of a multi-part document carries the document metadata', () => {
+  const doc: DocumentRecord = {
+    id: 'meta-doc',
+    title: 'Meta · test document',
+    file: 'unused.md',
+    version: 3,
+    validFrom: '2026-01-01',
+    validTo: null,
+    audience: 'public',
+    family: 'fees',
+  };
+  const chunks = chunkDocument(doc, 'x'.repeat(1500));
+  assert.ok(chunks.length >= 2);
+  for (const chunk of chunks) {
+    assert.equal(chunk.documentId, doc.id);
+    assert.equal(chunk.title, doc.title);
+    assert.equal(chunk.version, doc.version);
+    assert.equal(chunk.validFrom, doc.validFrom);
+    assert.equal(chunk.validTo, doc.validTo);
+    assert.equal(chunk.audience, doc.audience);
+  }
+});
+
+test('search keeps only documents in force at the reference date', async () => {
+  seedApp();
+  const query = `validity-check-${Date.now()}`;
+  const queryVector = Array.from({ length: dimensions }, (_, i) => (i === 0 ? 1 : 0));
+  // Pre-cache the query embedding so the search needs no API call.
+  appDb()
+    .prepare('INSERT OR REPLACE INTO embedding_cache VALUES(?,?)')
+    .run(embeddingKey(query), vectorBuffer(queryVector));
+  const base = {
+    text: 'validity test chunk',
+    audience: 'public',
+    version: 1,
+    title: 'Validity · test',
+    validFrom: '2026-01-01',
+    validTo: null,
+  };
+  const chunk = (overrides: Partial<Chunk> & { id: string; documentId: string }): Chunk =>
+    ({ ...base, ...overrides }) as Chunk;
+  const expired = chunk({
+    id: 'chunk-expired',
+    documentId: 'doc-expired',
+    validTo: '2026-08-31',
+    vector: queryVector, // would rank first if not filtered
+  });
+  const current = chunk({
+    id: 'chunk-current',
+    documentId: 'doc-current',
+    validTo: null,
+    vector: queryVector.map((v) => v * 0.5), // lower score than the expired one
+  });
+  const future = chunk({
+    id: 'chunk-future',
+    documentId: 'doc-future',
+    validFrom: '2026-10-01',
+    validTo: null,
+    vector: queryVector.map((v) => v * 0.4),
+  });
+  replaceChunks([expired, current, future], { model: config.embeddingModel, dimensions });
+  const results = await searchDocuments(query, 'customer', 5);
+  assert.deepEqual(
+    results.map((r) => r.documentId),
+    ['doc-current'],
+  );
+  assert.equal(results[0].title, 'Validity · test');
+  assert.equal(results[0].version, 1);
+});
+
 test('search without an API key returns actionable configuration guidance', async () => {
   seedApp();
   const previousKey = process.env.OPENAI_API_KEY;
