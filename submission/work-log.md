@@ -193,6 +193,14 @@ Una capa de confianza sobre el asistente que cubre dos contratos incumplidos a l
 
 Esto también es material de video: muestra el ciclo completo **feedback real → diagnóstico con evidencia (DB + logs) → mejora de producto**.
 
+**Segunda iteración (mismo día, commit `0a01b4f`)**: en la prueba real, el usuario confirmó desde el panel y la transferencia se ejecutó, pero **el chat no lo reflejaba** — seguía diciendo "has not been sent", sin recibo y sin forma de confirmar desde la propia conversación. Diagnóstico con evidencia: aprobación `4e31a8bf` consumida + intent `completed` en la DB vs. último mensaje del asistente congelado en el aviso previo. Arreglo:
+
+- La conversación ahora devuelve `pendingApprovals` y el chat muestra **la tarjeta de confirmación dentro de la conversación** (misma cuenta atrás/Confirm/Discard/reintento, un solo estado y un solo intervalo compartidos con el formulario y el panel).
+- Al confirmar, el backend añade **un recibo verificado** al hilo: monto, concepto, reference real y etiquetas de cuentas resueltas del banco (fallback a ids; nunca inventado). Nada se añade si el resultado no es `completed`.
+- La conversación se recarga sola tras confirmar → el recibo aparece sin refrescar, y el operador lo ve en el historial.
+
+Verificado: 3 tests nuevos (32/32), ciclo en vivo por API (propuesta → `pendingApprovals` → confirm → recibo con reference → segundo confirm 409 sin mensaje extra).
+
 ### Demo script para el video (guión sugerido)
 
 1. **Cita verificable**: "What is the monthly fee of the Aurora account and when is it waived?" → respuesta con chip `[aurora-fees-2026 v2]` → click → abre el documento en la biblioteca. (Verificado: la respuesta cita condiciones exactas — €6/mes, exención con salario ≥€1.200 + 3 compras.)
