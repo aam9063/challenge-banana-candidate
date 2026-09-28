@@ -180,6 +180,18 @@ DOUBLE DEBIT CONFIRMED: one €1.00 intention debited €3.00.
 
 **Verificación propia (observable = `events`)**: petición completa → `list_accounts` → `transfer_money` → `requires_confirmation` con `approvalId`, 1 intent, `pendingApprovals` = 1 en la conversación, y respuesta que guía a la tarjeta. Worker: 2/2 en peticiones completas, 2/3 preguntando la cuenta cuando es ambigua (y siempre creando la propuesta en el turno siguiente). **40/40 tests.**
 
+## Fase 10 — Una sola propuesta pendiente por conversación (y fin del panel duplicado)
+
+**Contexto**: el usuario reportó propuestas en el panel que no correspondían a su conversación. Diagnóstico: **restos de smoke tests** (del asistente y del worker) sobre el mismo usuario Lucía — 4 propuestas pendientes huérfanas. Limpieza vía API (0 pendientes) + eliminación de 4 conversaciones vacías de prueba.
+
+**Dos causas de fondo corregidas**:
+1. **Acumulación**: cada turno del agente crea un intent nuevo → propuesta nueva; los reintentos se apilaban. Ahora: petición idéntica en la misma conversación → **reutiliza** la propuesta (mismo `approvalId`, sin fila nueva); petición distinta → **supersede** las anteriores de esa conversación con un UPDATE directo (silencio: no es un descarte del usuario, no debe generar mensaje). El UPDATE se acota con `intent_id IN (SELECT id FROM intents WHERE conversation_id=?)`, de modo que otras conversaciones y las propuestas sin conversación quedan intactas.
+2. **Panel duplicado**: el panel de propuestas se renderizaba también bajo el chat. Ahora solo en Overview; el chat usa su tarjeta inline (una por propuesta pendiente).
+
+**Verificación en vivo (asistente)**: A(100c) → B(200c) supersede A y confirmar A da 409 → C(200c idéntica a B) reutiliza el mismo `approvalId`; conversación y dashboard muestran exactamente 1. 4 tests nuevos (**44/44**).
+
+**Lección de método registrada**: los smoke tests no deben contaminar los datos de demo; hay que limpiar las propuestas pendientes al terminar cada verificación (y evitar dejar conversaciones vacías).
+
 ## Decisiones transversales y su porqué
 
 | Decisión | Porqué |

@@ -214,6 +214,15 @@ Verificado en vivo: cancelar → desaparece de ambos lados; re-cancelar idempote
 
 **Quinta iteración (commit `221ecf7`)**: el usuario reportó que la tarjeta de confirmación ya no aparecía al pedir una transferencia. Diagnóstico con la tabla `events` (el observable correcto de las tool calls del agente): la conversación mostraba **solo `list_accounts`**, sin ningún evento `transfer_money` ni intents — el modelo respondió en prosa prometiendo una confirmación que nunca creó. Causa: el prompt evidencia-first describía el comportamiento posterior a `requires_confirmation` sin exigir la llamada al tool. Arreglo: reglas imperativas (llamar a `transfer_money` en el mismo turno con datos completos; nunca presentar un resumen en prosa como propuesta; citas solo para documentación). Verificado en vivo con el observable correcto: `list_accounts → transfer_money → requires_confirmation` + propuesta real en la conversación. 40/40 tests.
 
+**Sexta iteración (commit `b6b953e`)**: el usuario vio en el panel propuestas pendientes que no correspondían a su conversación — eran **restos de los smoke tests** del asistente y del worker sobre el mismo usuario (limpiados con la API: 0 pendientes; además se eliminaron 4 conversaciones vacías de prueba). Además se corrigieron dos problemas de producto de fondo:
+
+- **Acumulación de propuestas**: cada turno del agente creaba una propuesta nueva, así que los reintentos se apilaban. Ahora, en una conversación, una petición **idéntica reutiliza** la propuesta existente (mismo `approvalId`) y una **distinta la reemplaza** (la anterior se cancela en silencio, sin mensaje de chat). El UPDATE está acotado por `intents.conversation_id`, así que nunca toca otras conversaciones ni propuestas sin conversación.
+- **Panel duplicado**: "Proposals awaiting confirmation" se renderizaba también bajo el chat, compitiendo con la tarjeta inline y mostrando propuestas de otras conversaciones. Ahora vive solo en Overview; en el chat manda la tarjeta.
+
+Verificado en vivo: payload distinto → 1 pendiente y la superseded responde 409; payload idéntico → mismo `approvalId`; conversación y dashboard muestran exactamente una. 4 tests nuevos (**44/44**).
+
+**Lección de método**: no contaminar los datos de demo con smoke tests — limpiar las propuestas al terminar cada verificación.
+
 ### Demo script para el video (guión sugerido)
 
 1. **Cita verificable**: "What is the monthly fee of the Aurora account and when is it waived?" → respuesta con chip `[aurora-fees-2026 v2]` → click → abre el documento en la biblioteca. (Verificado: la respuesta cita condiciones exactas — €6/mes, exención con salario ≥€1.200 + 3 compras.)
