@@ -10,7 +10,7 @@
 
 ## User messages (session of 28-09-2026)
 
-1. "Vale a ver este es un proyecto para una hackaton. Quiero que vayas a fuego con ella... En la carpeta docs tienes challenge.md y contracts.md... antes leete el readme e intenta instalar las dependencias porque a mi me da fallos y errores y a ver porque son... Creo que hay que adjuntar los archivos de las sesiones de IA... eso vas a empezar a guardarlo a partir de que tengamos todo el setup listo... Cuando consigas instalar dependencias explicame que es lo que hay que hacer y en que consiste el proyecto" *(repeated twice)*
+1. "En la carpeta docs tienes challenge.md y contracts.md... antes leete el readme e intenta instalar las dependencias porque a mi me da fallos" *(repeated twice)*
 2. "voy a crear el .env que no estara trackeado por git y ahi irá la api key, te aviso ahora"
 3. "ya está. Una cosa que se me ha olvidado decirte, todas las features saldran a ramas a partir de dev no de master. Todo pasara por dev antes de master"
 4. "Sí. Quiero que lo documentes todo cuando lo implementes. A parte de las sesiones de IA quiero otro md para registrar todo para hacer el video explicativo y documentarlo bien"
