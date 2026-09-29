@@ -113,6 +113,10 @@ Instrumento: `scripts/eval-answers.ts` — 7 preguntas con verdad de referencia 
 **Causa raíz**: `scripts/setup.ts` crea `.env.local` con `OPENAI_API_KEY=` **vacío**, y `src/config.ts:3-4` carga `.env.local` antes que `.env`. dotenv no pisa variables ya definidas → el valor vacío tapaba la key real.
 **Arreglo**: eliminar la línea vacía de `.env.local`. Doctor posterior: verde.
 
+**Arreglo de código (no solo del entorno local)** — rama `fix/env-precedence`, commit `c16bca1`: `scripts/setup.ts` ahora escribe `.env.local` con la línea `OPENAI_API_KEY` **comentada**, así la key puede venir de `.env.local`, de `.env` o del entorno sin que un valor vacío la tape; y `README.md` documenta la precedencia y la trampa. Sin esto, cualquiera que clonara la entrega chocaba con el mismo error confuso en su primer `npm run doctor`.
+
+Verificación: se borró `.env.local`, se ejecutó `npm run setup` y el archivo generado contiene `# OPENAI_API_KEY=`; el original se restauró byte-idéntico (probado con `diff`).
+
 **Verificación final** (walkthrough del README, todo por API y UI):
 - `npm run doctor` → `gpt-6-luna` responde, embeddings 1536 dims ✅
 - Lucía ve 2 cuentas: Aurora €4.007,50 + Ahorros €1.000,00 ✅
