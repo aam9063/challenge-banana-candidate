@@ -25,6 +25,14 @@ export type Operation = TransferInput & {
   createdAt: string;
   status: 'completed';
 };
+export type BankMovement = {
+  id: string;
+  accountId: string;
+  operationId: string | null;
+  amountCents: number;
+  description: string;
+  createdAt: string;
+};
 export type ToolContext = {
   userId: string;
   conversationId: string | null;

@@ -1,5 +1,5 @@
 import { appDb } from '../db';
-import { config } from '../config';
+import { config, referenceDate } from '../config';
 import { embedTexts } from './embeddings';
 import { allChunks } from './store';
 import type { SearchResult } from '../types';
@@ -15,7 +15,15 @@ export async function searchDocuments(
     throw new Error('The model does not match the index. Re-ingest the documents.');
   const [queryVector] = await embedTexts([query]);
   return allChunks()
-    .filter((c) => role === 'operator' || c.audience === 'public')
+    // Only chunks from documents in force at the reference date: the corpus
+    // uses uniform date-only values (YYYY-MM-DD), so lexicographic comparison
+    // is exact. Null bounds mean open-ended validity.
+    .filter(
+      (c) =>
+        (role === 'operator' || c.audience === 'public') &&
+        (c.validFrom === null || c.validFrom <= referenceDate) &&
+        (c.validTo === null || c.validTo >= referenceDate),
+    )
     .map(({ vector, ...c }) => {
       if (vector!.length !== queryVector.length) throw new Error('Incompatible embedding dimensions.');
       const score = vector!.reduce((sum, v, i) => sum + v * queryVector[i], 0);
