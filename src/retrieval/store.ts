@@ -1,6 +1,7 @@
 import { appDb } from '../db';
 import { config } from '../config';
 import { vectorBuffer, readVector, embeddingKey } from './embeddings';
+import { embeddingInputFor } from '../ingestion/pipeline';
 import type { Chunk } from '../types';
 export type IndexDump = {
   format: 1;
@@ -78,7 +79,12 @@ export function restoreIndex(index: IndexDump) {
   db.transaction(() => {
     for (const c of chunks)
       db.prepare('INSERT OR REPLACE INTO embedding_cache VALUES(?,?)').run(
-        embeddingKey(c.text),
+        // Key the restored cache entry exactly like the ingest path: the
+        // restored vector was produced from the prefixed embedding input
+        // (embeddingInputFor), not from the raw chunk text. Keying by the
+        // raw text would let a query string equal to a chunk's clean text
+        // hit a cache entry that is not the embedding of that string.
+        embeddingKey(embeddingInputFor(c)),
         vectorBuffer(c.vector),
       );
   })();

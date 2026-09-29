@@ -1,147 +1,148 @@
 # Banana Bank — Work Log (video material)
 
-> Registro cronológico y verificable de todo el trabajo de la Parte 1 y Parte 2.
-> Cada entrada es material directo para el video explicativo: problema → evidencia → causa raíz → arreglo → verificación.
-> Las sesiones de IA completas están en `submission/ai-sessions/`.
+> **What this file is**: the chronological engineering record of the project. Every unit of work is logged as *problem → root cause (file) → reproduction → fix (commit) → verification with numbers*, plus the decisions and the declared limits.
+> **What it is for**: (1) evidence for the evaluation — every claim has its reproduction; (2) video material — the recording script is in `submission/VIDEO-SCRIPT.md`.
+> **Related documents**: `submission/EXPLANATION.md` (submission explanation), `submission/README.md` (inventory), `submission/ai-sessions/` (original AI sessions), `submission/evidence/` (raw measurement results).
 
-## Índice
+## Index
 
-0. [Mapa contrato → bug → arreglo → evidencia](#0-mapa-contrato--bug--arreglo--evidencia)
-0b. [Evidencia del starter: casos sembrados](#0b-evidencia-del-starter-casos-sembrados)
-0c. [Medición antes/después (eval)](#0c-medición-antesdespués-eval-de-respuestas)
-1. [Setup y diagnóstico de instalación](#1-setup-y-diagnóstico-de-instalación)
-2. [Bug 1: Doble débito en reintentos de transferencia](#2-bug-1-doble-débito-en-reintentos-de-transferencia)
-3. [Bug 2: Documentación caducada en las respuestas](#3-bug-2-documentación-caducada-en-las-respuestas-del-asistente)
-4. [Parte 2: Trust Layer](#4-parte-2--trust-layer-feature-distintiva)
-5. [Estado final: hecho / verificado / pendiente](#estado-final-hecho--verificado--pendiente)
-6. [Parte 2 (extensión): Coach de comisiones](#6-parte-2-extensión--coach-de-comisiones)
+0. [Contract → bug → fix → evidence map](#0-contract--bug--fix--evidence-map)
+0b. [Starter evidence: seeded cases](#0b-starter-evidence-seeded-cases)
+0c. [Before/after measurement (answer eval)](#0c-beforeafter-measurement-answer-eval)
+1. [Setup and installation diagnosis](#1-setup-and-installation-diagnosis)
+2. [Bug 1: Double debit on transfer retries](#2-bug-1-double-debit-on-transfer-retries)
+3. [Bug 2: Stale documentation in assistant answers](#3-bug-2-stale-documentation-in-assistant-answers)
+4. [Part 2: Trust Layer](#4-part-2--trust-layer-distinctive-feature)
+5. [Final state: done / verified / pending](#final-state-done--verified--pending)
+6. [Part 2 (extension): Fee Coach](#6-part-2-extension--fee-coach)
+7. [Closing the declared pending items](#7-closing-the-declared-pending-items)
 
 ---
 
-## 0. Mapa contrato → bug → arreglo → evidencia
+## 0. Contract → bug → fix → evidence map
 
-Las cláusulas de negocio de `docs/contracts.md` y el defecto correspondiente en el starter. Cada uno con reproducción, arreglo y verificación.
+The business clauses from `docs/contracts.md` and the corresponding defect in the starter. Each one with reproduction, fix and verification.
 
-| Cláusula de `contracts.md` | Bug encontrado | Reproducción / evidencia | Arreglo | Verificación |
+| Clause from `contracts.md` | Bug found | Reproduction / evidence | Fix | Verification |
 |---|---|---|---|---|
-| *"An operation intent represents a customer intention. Retrying that intent must not multiply its effects."* | Reference nueva por intento → el dinero se movía **3 veces** | `scripts/repro-double-debit.ts` (perfil `lost-response`): intención de €1,00 → **€3,00** debitados | `8056774`: `stableReference()` por intent + gates de estado + reconciliación | Repro impreso: delta exacto **−€1,00**, reintento sin efectos · 4 tests |
-| *"A transport error or timeout does not prove that the bank rejected the operation. Customer-facing status should match verified facts."* | Un 504 marcaba `failed` aunque el banco hubiera commitido | Mismo repro + perfil `slow-response`/`lost-response`; `client.ts` convertía todo timeout en 504 sin verificar | `8056774`: `reconcileOutcome()` (encontrada→completed · 404→failed verificado · consulta falla→`processing` no terminal con reference) | 3 tests (recuperado por reconciliación; inverificable nunca `failed`) |
-| *"A sensitive operation must present its amount, source, and destination for explicit review before execution. An informational conversation alone does not authorize payment."* | `authorizeTransfer` devolvía siempre `null`: el flujo de aprobaciones era código muerto y el agente transfería desde el chat | Caso sembrado **Elena** (`fixtures/conversations.json`): *"Before deciding whether to send EUR 25 to Hugo…"* → **"Transfer completed."** | `1b1099a`: propuesta explícita (10 min) + consumo atómico + checks 409/410; `fcd0405`: cancelación real; `221ecf7`: el agente debe crear la propuesta con el tool; `b6b953e`: una propuesta por conversación | 10 tests (propuesta sin débito, doble confirm 409, expirada 410, payload alterado 409, supersede, reutilización) + E2E en vivo |
-| *"Assistant information should rely on applicable documentation and make its evidence traceable. Missing evidence should be acknowledged with a useful next step. Documents can contain historical versions."* | Prompt que invitaba a inventar (`concrete estimate`, `references are not required`) + metadatos solo en el primer chunk + sin filtro de vigencia | Casos sembrados **Inés** (*"It is common to receive EUR 30 for a referral"*) y **Carla** (comisión correcta pero **sin cita**); corpus con `archive-aurora-*` (EUR 8) compitiendo con el vigente (EUR 6) | `38fc5ed`: metadatos en todos los chunks + filtro de vigencia (2026-09-24) + re-ingesta; `53d3333`: citas obligatorias `[docId vN]`, prohibido estimar, sin evidencia → admitirlo + siguiente paso | 4 tests de vigencia/cita + búsqueda en vivo sin `archive-*` + preguntas en vivo citando `[aurora-fees-2026 v2]` |
-| *"Operators need to understand the conversation, relevant steps, and effects. Historical evidence that was never recorded must not be invented."* | `caseDetail` con `history/events/intents/bank` hardcodeados; `recordEvent` descartaba args/salidas; los casos no se podían cerrar | Código + verificación en vivo: la vista del operador no mostraba nada de lo ocurrido | `691c5b1`: telemetría íntegra, detalle del caso poblado (incl. `GET /v1/operator/customer`), `gaps` honestos, cierre de caso; `c730b02`/`959c4c5`: recibo de confirmación y registro de cancelación en el hilo | 4 tests + E2E con caso real: 8 eventos con `arguments/output/durationMs`, operación con reference, cierre y 409 al repetir |
-| *"Only an account holder may initiate a transfer from that account. Operators cannot transfer customer money."* | (Sin defecto encontrado) el check de titularidad existía y el rol se validaba | Revisión de `authorization.ts` / `tools.ts` | Sin cambios | Tests de rol existentes |
-| *"Amounts are positive integer euro cents, without overdrafts. Maximum per operation: 10,000,000 cents."* | (Sin defecto encontrado) validación zod activa | Revisión de `transferSchema` | Sin cambios | Tests existentes |
+| *"An operation intent represents a customer intention. Retrying that intent must not multiply its effects."* | New reference per attempt → money was moved **3 times** | `scripts/repro-double-debit.ts` (profile `lost-response`): a €1.00 intention → **€3.00** debited | `8056774`: `stableReference()` per intent + status gates + reconciliation | Repro printed: exact delta **−€1.00**, retry without side effects · 4 tests |
+| *"A transport error or timeout does not prove that the bank rejected the operation. Customer-facing status should match verified facts."* | A 504 was marked `failed` even though the bank may have committed | Same repro + profile `slow-response`/`lost-response`; `client.ts` turned every timeout into 504 without verifying | `8056774`: `reconcileOutcome()` (found→completed · 404→verified failed · query fails→non-terminal `processing` with reference) | 3 tests (recovered via reconciliation; unverifiable never `failed`) |
+| *"A sensitive operation must present its amount, source, and destination for explicit review before execution. An informational conversation alone does not authorize payment."* | `authorizeTransfer` always returned `null`: the approvals flow was dead code and the agent transferred straight from the chat | Seeded case **Elena** (`fixtures/conversations.json`): *"Before deciding whether to send EUR 25 to Hugo…"* → **"Transfer completed."** | `1b1099a`: explicit proposal (10 min) + atomic consumption + 409/410 checks; `fcd0405`: real cancellation; `221ecf7`: the agent must create the proposal with the tool; `b6b953e`: one proposal per conversation | 10 tests (proposal without debit, double confirm 409, expired 410, altered payload 409, supersede, reuse) + live E2E |
+| *"Assistant information should rely on applicable documentation and make its evidence traceable. Missing evidence should be acknowledged with a useful next step. Documents can contain historical versions."* | Prompt that invited making things up (`concrete estimate`, `references are not required`) + metadata only in the first chunk + no in-force filter | Seeded cases **Inés** (*"It is common to receive EUR 30 for a referral"*) and **Carla** (correct fee but **no citation**); corpus with `archive-aurora-*` (EUR 8) competing with the in-force document (EUR 6) | `38fc5ed`: metadata on every chunk + in-force filter (2026-09-24) + re-ingestion; `53d3333`: mandatory citations `[docId vN]`, estimating forbidden, no evidence → admit it + next step | 4 tests for validity/citation + live search without `archive-*` + live questions citing `[aurora-fees-2026 v2]` |
+| *"Operators need to understand the conversation, relevant steps, and effects. Historical evidence that was never recorded must not be invented."* | `caseDetail` with hardcoded `history/events/intents/bank`; `recordEvent` discarded args/outputs; cases could not be closed | Code + live verification: the operator view showed nothing of what had happened | `691c5b1`: full telemetry, populated case detail (incl. `GET /v1/operator/customer`), honest `gaps`, case closing; `c730b02`/`959c4c5`: confirmation receipt and cancellation record in the thread | 4 tests + E2E with a real case: 8 events with `arguments/output/durationMs`, operation with reference, closing and 409 on repeat |
+| *"Only an account holder may initiate a transfer from that account. Operators cannot transfer customer money."* | (No defect found) the ownership check existed and the role was validated | Review of `authorization.ts` / `tools.ts` | No change | Existing role tests |
+| *"Amounts are positive integer euro cents, without overdrafts. Maximum per operation: 10,000,000 cents."* | (No defect found) zod validation active | Review of `transferSchema` | No change | Existing tests |
 
-**Lectura para la evaluación**: los cinco defectos materiales del starter se corresponden con cláusulas explícitas del contrato; dos cláusulas (titularidad/roles y límites de importe) ya se cumplían y se verificaron para descartarlas.
+**Reading for the evaluation**: the five material defects of the starter map to explicit contract clauses; two clauses (ownership/roles and amount limits) were already satisfied and were verified in order to rule them out.
 
 ---
 
-## 0b. Evidencia del starter: casos sembrados
+## 0b. Starter evidence: seeded cases
 
-`fixtures/conversations.json` contiene 47 conversaciones narrativas que **demuestran los bugs dentro del propio starter** — evidencia ideal para el video (el "antes" no lo fabricamos nosotros; viene con el proyecto):
+`fixtures/conversations.json` contains 47 narrative conversations that **demonstrate the bugs inside the starter itself** — ideal evidence for the video (we did not fabricate the "before"; it ships with the project):
 
-| Cliente | Conversación | Contenido sembrado | Cláusula violada |
+| Customer | Conversation | Seeded content | Clause violated |
 |---|---|---|---|
-| **Elena** | *Payment planning* | *"Before deciding whether to send EUR 25 to Hugo, what would I need to review?"* → **"Transfer completed."** | Confirmación explícita: una pregunta informativa "ejecutó" un pago |
-| **Diego** | *Transfer enquiry* | *"I want to send EUR 200 to Inés"* → *"The operation could not be completed."* | Estado no verificado / sin evidencia |
-| **Inés** | *Rewards question* | *"It is common to receive EUR 30 for a referral."* | Alucinación: los documentos **no** especifican referidos (`context-guide-*`) |
-| **Carla** | *Account information* | *"The Aurora monthly fee is EUR 6."* (correcto pero **sin cita**) | Evidencia trazable ausente |
-| **Lucía** | *Dinner payment* | *"I could not complete the transfer. You can try again."* | Estado no verificado |
+| **Elena** | *Payment planning* | *"Before deciding whether to send EUR 25 to Hugo, what would I need to review?"* → **"Transfer completed."** | Explicit confirmation: an informational question "executed" a payment |
+| **Diego** | *Transfer enquiry* | *"I want to send EUR 200 to Inés"* → *"The operation could not be completed."* | Unverified status / no evidence |
+| **Inés** | *Rewards question* | *"It is common to receive EUR 30 for a referral."* | Hallucination: the documents do **not** specify referrals (`context-guide-*`) |
+| **Carla** | *Account information* | *"The Aurora monthly fee is EUR 6."* (correct but **without citation**) | Traceable evidence missing |
+| **Lucía** | *Dinner payment* | *"I could not complete the transfer. You can try again."* | Unverified status |
 
-Con los arreglos, estos mismos casos cambian de comportamiento: Elena recibe una propuesta a confirmar (no un "completed" falso), Inés escucha que no hay documentación aplicable y se le ofrece un siguiente paso, Carla recibe la comisión **con cita y versión**, y Diego/Lucía obtienen un estado verificado contra el banco.
+With the fixes, these same cases change behavior: Elena gets a proposal to confirm (not a fake "completed"), Inés is told there is no applicable documentation and is offered a next step, Carla gets the fee **with citation and version**, and Diego/Lucía get a status verified against the bank.
 
-### Verificación en vivo de los casos sembrados (after)
+### Live verification of the seeded cases (after)
 
-Preguntados tal cual están sembrados, con el código arreglado:
+Asked exactly as seeded, with the fixed code:
 
 **Elena** — *"Before deciding whether to send EUR 25 to Hugo, what would I need to review?"*
 
 > Review the source account and available balance, confirm that Hugo is the intended recipient, and check the transfer details before deciding. **I haven't sent anything.**
 
-→ Cero propuestas creadas: una pregunta informativa ya no "ejecuta" nada, y el asistente declara explícitamente que no ha enviado nada (antes respondía "Transfer completed.").
+→ Zero proposals created: an informational question no longer "executes" anything, and the assistant explicitly states it has not sent anything (before, it answered "Transfer completed.").
 
 **Inés** — *"How much money do I get for referring a friend to the bank?"*
 
 > I couldn't find applicable documentation stating how much a referral reward pays. You can check the Documents section in the app, or I can open a support case to ask about the current referral offer.
 
-→ Admite la falta de evidencia y ofrece dos siguientes pasos concretos (documentación o caso de soporte); antes inventaba "EUR 30".
+→ It admits the lack of evidence and offers two concrete next steps (documentation or a support case); before, it made up "EUR 30".
 
 ---
 
-## 0c. Medición antes/después (eval de respuestas)
+## 0c. Before/after measurement (answer eval)
 
-Instrumento: `scripts/eval-answers.ts` — 7 preguntas con verdad de referencia del corpus, cada una en una conversación nueva, puntuando tres criterios: **hecho correcto**, **hecho prohibido ausente** (la trampa del archivo) y **cita `[docId vN]`**. `REPEATS=2` → 14 turnos por lado. Evidencia cruda: `submission/evidence/eval-before-r2.json` y `eval-after-r2.json`.
+Instrument: `scripts/eval-answers.ts` — 7 questions with ground truth from the corpus, each in a fresh conversation, scoring three criteria: **correct fact**, **forbidden fact absent** (the archive trap) and **citation `[docId vN]`**. `REPEATS=2` → 14 turns per side. Raw evidence: `submission/evidence/eval-before-r2.json` and `eval-after-r2.json`.
 
-- **BEFORE**: commit base `db0bdf5`, servidor propio en puertos 3010/4011 (worktree desechable, ya eliminado).
-- **AFTER**: la rama con los arreglos, servidor en 3000.
+- **BEFORE**: base commit `db0bdf5`, its own server on ports 3010/4011 (disposable worktree, already removed).
+- **AFTER**: the branch with the fixes, server on 3000.
 
-| # | Pregunta | Verdad | Trampa | BEFORE | AFTER |
+| # | Question | Truth | Trap | BEFORE | AFTER |
 |---|---|---|---|---|---|
-| 1 | Comisión Aurora | EUR 6 | EUR 8 (archivado) | 0/2 · sin cita | **2/2 · citado** (`aurora-fees-2026 v2`) |
-| 2 | Comisión Horizon | EUR 3 | 6/8 de Aurora | 0/2 · sin cita | **2/2 · citado** (`horizon-fees-2026 v2`) |
-| 3 | Recompensa por referidos | no documentado | EUR 30 inventado | 1/2 · sin cita | **2/2** (cita no exigida) |
-| 4 | Límite por transferencia | EUR 100.000 | — | 0/2 · sin cita | **2/2 · citado** (`aurora-operations-2026 v2`) |
-| 5 | Comisión Cloud | EUR 0 | 2/5/6 | 0/2 · sin cita | **2/2 · citado** |
-| 6 | Comisión Community | EUR 2 | 0/5/6 | 0/2 · sin cita | **2/2 · citado** |
-| 7 | Comisión Family | EUR 5 | 0/2/6 | 0/2 · sin cita | **2/2 · citado** |
-| | **Total** | | | **1/14 pasan · 0/14 citan** | **14/14 pasan · 12/14 citan (12/12 de las exigidas)** |
+| 1 | Aurora fee | EUR 6 | EUR 8 (archived) | 0/2 · no citation | **2/2 · cited** (`aurora-fees-2026 v2`) |
+| 2 | Horizon fee | EUR 3 | 6/8 from Aurora | 0/2 · no citation | **2/2 · cited** (`horizon-fees-2026 v2`) |
+| 3 | Referral reward | not documented | EUR 30 invented | 1/2 · no citation | **2/2** (citation not required) |
+| 4 | Limit per transfer | EUR 100.000 | — | 0/2 · no citation | **2/2 · cited** (`aurora-operations-2026 v2`) |
+| 5 | Cloud fee | EUR 0 | 2/5/6 | 0/2 · no citation | **2/2 · cited** |
+| 6 | Community fee | EUR 2 | 0/5/6 | 0/2 · no citation | **2/2 · cited** |
+| 7 | Family fee | EUR 5 | 0/2/6 | 0/2 · no citation | **2/2 · cited** |
+| | **Total** | | | **1/14 pass · 0/14 cite** | **14/14 pass · 12/14 cite (12/12 of the required ones)** |
 
-### Lectura honesta del resultado
+### Honest reading of the result
 
-- **El delta medido es trazabilidad, no acierto factual.** El código base respondió correctamente los 7 hechos en ambas repeticiones; lo que cambia con el arreglo es el **grounding**: 0/12 turnos citaban antes → 12/12 citan con el `docId` y la versión correctos después. Es exactamente la cláusula *"make its evidence traceable"*.
-- **El 1/14 del base no es un fallo del agente base** en su totalidad: 13 turnos fallan por la exigencia de cita (y 1 de ellos por paráfrasis: el base dijo *"couldn't verify a referral reward"* y la regex solo contemplaba *"couldn't find"*). Se registra para no sobreinterpretar el número.
-- **Sin invención en ninguna de las 28 respuestas**: ni EUR 8 como comisión vigente, ni recompensa de referidos, ni comisiones cruzadas entre productos.
-- **Límites del instrumento (declarados)**: puntúa por presencia/ausencia de cifras, así que una respuesta que *compare* productos (p.ej. "Horizon cuesta EUR 3, no EUR 6 como Aurora") contaría el 6 como prohibido y daría un falso negativo. No ocurrió en ninguna de las 28 respuestas, y el sesgo —de existir— es **en contra** de nuestra medición, nunca a favor.
-- **Límite conocido del arreglo**: las preguntas genuinamente históricas no recuperan el valor archivado (los documentos caducados están fuera de la búsqueda que alimenta respuestas; siguen visibles en la biblioteca). Verificado en vivo: *"What was the Aurora account monthly fee before September 2026?"* → el asistente admite que no tiene documentación aplicable, cita el aviso vigente `[notice-aurora v2]` y ofrece consultar el archivo vía soporte — **no inventa el EUR 8**.
-
----
-
-## 1. Setup y diagnóstico de instalación
-
-**Fecha**: 28-09-2026
-
-**Problema**: `npm ci` fallaba en Windows (Node 24.18.0).
-
-**Diagnóstico** (comandos reproducibles):
-1. `npm ci` → `node-gyp ERR! find VS ... missing any VC++ toolset` — el compilador de C++ no estaba instalado.
-2. `prebuild-install` manual → **404**: no existe prebuild de `better-sqlite3@13.0.3` para Node 24 (ABI v137) en win32-x64, por lo que npm siempre caía a compilar con node-gyp.
-3. `npm install --ignore-scripts` → los otros 32 paquetes instalaban sin problemas; el único bloqueo era el módulo nativo.
-
-**Arreglo**: instalación del workload *"Desktop development with C++"* (`Microsoft.VisualStudio.Workload.NativeDesktop`) sobre el VS 2022 Community existente. Después: `npm ci` → 0 errores, 0 vulnerabilidades.
-
-**Segundo problema**: `npm run doctor` fallaba con `connection_or_configuration_error` aunque la key estaba en `.env`.
-**Causa raíz**: `scripts/setup.ts` crea `.env.local` con `OPENAI_API_KEY=` **vacío**, y `src/config.ts:3-4` carga `.env.local` antes que `.env`. dotenv no pisa variables ya definidas → el valor vacío tapaba la key real.
-**Arreglo**: eliminar la línea vacía de `.env.local`. Doctor posterior: verde.
-
-**Arreglo de código (no solo del entorno local)** — rama `fix/env-precedence`, commit `c16bca1`: `scripts/setup.ts` ahora escribe `.env.local` con la línea `OPENAI_API_KEY` **comentada**, así la key puede venir de `.env.local`, de `.env` o del entorno sin que un valor vacío la tape; y `README.md` documenta la precedencia y la trampa. Sin esto, cualquiera que clonara la entrega chocaba con el mismo error confuso en su primer `npm run doctor`.
-
-Verificación: se borró `.env.local`, se ejecutó `npm run setup` y el archivo generado contiene `# OPENAI_API_KEY=`; el original se restauró byte-idéntico (probado con `diff`).
-
-**Verificación final** (walkthrough del README, todo por API y UI):
-- `npm run doctor` → `gpt-6-luna` responde, embeddings 1536 dims ✅
-- Lucía ve 2 cuentas: Aurora €4.007,50 + Ahorros €1.000,00 ✅
-- Marta (operadora) ve 17 casos de soporte ✅
-- Chat: *"What accounts do I have?"* → respuesta correcta con ambas cuentas y saldos exactos ✅
+- **The measured delta is traceability, not factual accuracy.** The base code answered all 7 facts correctly in both repetitions; what changes with the fix is the **grounding**: 0/12 turns cited before → 12/12 cite with the correct `docId` and version after. That is exactly the clause *"make its evidence traceable"*.
+- **The base's 1/14 is not entirely a failure of the base agent**: 13 turns fail due to the citation requirement (and 1 of them due to paraphrase: the base said *"couldn't verify a referral reward"* and the regex only matched *"couldn't find"*). It is recorded to avoid over-interpreting the number.
+- **No invention in any of the 28 answers**: neither EUR 8 as the in-force fee, nor a referral reward, nor cross-product fees.
+- **Instrument limits (declared)**: it scores by presence/absence of figures, so an answer that *compares* products (e.g. "Horizon costs EUR 3, not EUR 6 like Aurora") would count the 6 as forbidden and produce a false negative. It did not happen in any of the 28 answers, and the bias — if any — is **against** our measurement, never in its favor.
+- **Known limit of the fix**: genuinely historical questions do not retrieve the archived value (expired documents are outside the search that feeds answers; they remain visible in the library). Verified live: *"What was the Aurora account monthly fee before September 2026?"* → the assistant admits it has no applicable documentation, cites the in-force notice `[notice-aurora v2]` and offers to consult the archive via support — **it does not invent the EUR 8**.
 
 ---
 
-## 2. Bug 1: Doble débito en reintentos de transferencia
+## 1. Setup and installation diagnosis
 
-**Fecha**: 28-09-2026 · **Severidad**: crítica (dinero) · **Estado**: EN CURSO
+**Date**: 28-09-2026
 
-### El problema
+**Problem**: `npm ci` failed on Windows (Node 24.18.0).
 
-Los contratos (`docs/contracts.md`) exigen: *"Retrying that intent must not multiply its effects"* y *"A transport error or timeout does not prove that the bank rejected the operation"*.
+**Diagnosis** (reproducible commands):
+1. `npm ci` → `node-gyp ERR! find VS ... missing any VC++ toolset` — the C++ compiler was not installed.
+2. Manual `prebuild-install` → **404**: there is no prebuild of `better-sqlite3@13.0.3` for Node 24 (ABI v137) on win32-x64, so npm always fell back to compiling with node-gyp.
+3. `npm install --ignore-scripts` → the other 32 packages installed without trouble; the only blocker was the native module.
 
-### Causa raíz (lectura de código)
+**Fix**: installing the *"Desktop development with C++"* workload (`Microsoft.VisualStudio.Workload.NativeDesktop`) on top of the existing VS 2022 Community. Afterwards: `npm ci` → 0 errors, 0 vulnerabilities.
 
-- `src/banking/dispatch.ts:6-8`: cada intento de envío genera una **reference nueva** (`randomUUID()`), anulando la idempotencia del banco (la clave es `actor + reference`). Además sobrescribe `intents.bank_reference`, destruyendo la referencia original.
-- `src/banking/actions.ts:22-45`: al reenviar el mismo `intentId`, solo se valida usuario y payload — **nunca el `status` del intent**. Un intent `completed` o `failed` se vuelve a despachar.
-- `src/banking/client.ts:24-25`: un timeout se convierte en `BankError(504)` sin poder distinguir "el banco lo rechazó" de "el banco lo ejecutó y perdimos la respuesta".
+**Second problem**: `npm run doctor` failed with `connection_or_configuration_error` even though the key was in `.env`.
+**Root cause**: `scripts/setup.ts` creates `.env.local` with an **empty** `OPENAI_API_KEY=`, and `src/config.ts:3-4` loads `.env.local` before `.env`. dotenv does not override already-defined variables → the empty value was masking the real key.
+**Fix**: removing the empty line from `.env.local`. Doctor afterwards: green.
 
-### Reproducción (evidencia before) — CONFIRMADA
+**Code fix (not just the local environment)** — branch `fix/env-precedence`, commit `c16bca1`: `scripts/setup.ts` now writes `.env.local` with the `OPENAI_API_KEY` line **commented out**, so the key can come from `.env.local`, from `.env` or from the environment without an empty value masking it; and `README.md` documents the precedence and the trap. Without this, anyone cloning the submission would hit the same confusing error on their first `npm run doctor`.
 
-Perfil `lost-response`: la primera operación nueva **se compromete en el banco y después devuelve 504**. Script: `scripts/repro-double-debit.ts` (`node --import tsx scripts/repro-double-debit.ts` con servicios arriba).
+Verification: `.env.local` was deleted, `npm run setup` was run and the generated file contains `# OPENAI_API_KEY=`; the original was restored byte-identical (checked with `diff`).
+
+**Final verification** (README walkthrough, everything via API and UI):
+- `npm run doctor` → `gpt-6-luna` responds, embeddings 1536 dims ✅
+- Lucía sees 2 accounts: Aurora €4.007,50 + Savings €1.000,00 ✅
+- Marta (operator) sees 17 support cases ✅
+- Chat: *"What accounts do I have?"* → correct answer with both accounts and exact balances ✅
+
+---
+
+## 2. Bug 1: Double debit on transfer retries
+
+**Date**: 28-09-2026 · **Severity**: critical (money) · **Status**: IN PROGRESS
+
+### The problem
+
+The contracts (`docs/contracts.md`) require: *"Retrying that intent must not multiply its effects"* and *"A transport error or timeout does not prove that the bank rejected the operation"*.
+
+### Root cause (code reading)
+
+- `src/banking/dispatch.ts:6-8`: every send attempt generates a **new reference** (`randomUUID()`), nullifying the bank's idempotency (the key is `actor + reference`). It also overwrites `intents.bank_reference`, destroying the original reference.
+- `src/banking/actions.ts:22-45`: when re-sending the same `intentId`, only user and payload are validated — **never the intent's `status`**. A `completed` or `failed` intent gets dispatched again.
+- `src/banking/client.ts:24-25`: a timeout becomes `BankError(504)` with no way to distinguish "the bank rejected it" from "the bank executed it and we lost the response".
+
+### Reproduction (before evidence) — CONFIRMED
+
+Profile `lost-response`: the first new operation **commits at the bank and then returns 504**. Script: `scripts/repro-double-debit.ts` (`node --import tsx scripts/repro-double-debit.ts` with the services up).
 
 ```text
 intent: repro-double-debit-1790609703536
@@ -158,30 +159,30 @@ balance after retry:         €4004.50  (delta -€3.00)
 DOUBLE DEBIT CONFIRMED: one €1.00 intention debited €3.00.
 ```
 
-**Resultado: una intención de €1,00 debitó €3,00** — TRIPLE débito, por la composición de tres defectos:
+**Result: a €1.00 intention debited €3.00** — TRIPLE debit, from the composition of three defects:
 
-1. `dispatch.ts:5-9`: el retry interno ante 504 genera **reference nueva** → el banco (idempotencia `actor+reference`) lo trata como operación distinta → 2º débito. La app devolvió `completed` (la 2ª tentativa sí respondió) aunque el cliente pagó dos veces.
-2. `actions.ts:22-45`: el reintento con el mismo `intentId` no comprueba `intents.status` → vuelve a despachar → 3er débito.
-3. `intents.bank_reference` se sobrescribe en cada intento → la referencia original (que quedó comprometida en el banco) se pierde para reconciliación.
+1. `dispatch.ts:5-9`: the internal retry on 504 generates a **new reference** → the bank (idempotency on `actor+reference`) treats it as a different operation → 2nd debit. The app returned `completed` (the 2nd attempt did respond) even though the customer paid twice.
+2. `actions.ts:22-45`: the retry with the same `intentId` does not check `intents.status` → it dispatches again → 3rd debit.
+3. `intents.bank_reference` is overwritten on every attempt → the original reference (which was already committed at the bank) is lost for reconciliation.
 
-Nota: la app informó `completed` en ambos casos; el saldo real solo se ve en el banco. El estado reportado no refleja hechos verificados.
+Note: the app reported `completed` in both cases; the real balance is only visible at the bank. The reported status does not reflect verified facts.
 
-### Arreglo (implementado)
+### Fix (implemented)
 
-**Core: una reference por intent, para siempre.** El banco garantiza que reusar `actor+reference` con payload idéntico devuelve la operación original (`replay:true`) — eso convierte cualquier reintento (interno o de intent) en una consulta segura:
+**Core: one reference per intent, forever.** The bank guarantees that reusing `actor+reference` with an identical payload returns the original operation (`replay:true`) — that turns any retry (internal or of the intent) into a safe query:
 
-1. `src/banking/dispatch.ts` — nueva función `stableReference(intentId)`: lee `intents.bank_reference`, genera UUID solo si es null y lo persiste una vez. Tanto el retry interno (ambos intentos comparten reference) como el re-despacho entre llamadas lo reutilizan.
-2. `src/banking/actions.ts` — gates por estado del intent:
-   - `completed` → devuelve el resultado almacenado (enriquecido con la operación real vía `GET /v1/operations/:reference`); nunca re-despacha.
-   - `processing` → reconcilia vía `GET /v1/operations/:reference`; nunca re-despacha.
-   - `created`/`failed` → procede, siempre con la reference almacenada.
-   - Helper compartido `reconcileOutcome`: operación encontrada → `completed` (hecho verificado); 404 → `failed` (ausencia verificada); fallo de la consulta → estado no terminal `processing` con la reference para verificar después. **Nunca reporta `failed` sin evidencia.**
-3. `tests/invariants.test.ts` — 4 tests de regresión con un banco fake in-process (sin servicios vivos), escritos test-first (RED observado antes del fix): lost-response debita exactamente una vez; rechazo antes del commit → `failed` verificado; commit inalcanzable → recuperado a `completed`; resultado inverificable → `processing` y el reintento nunca re-despacha.
+1. `src/banking/dispatch.ts` — new function `stableReference(intentId)`: reads `intents.bank_reference`, generates a UUID only if it is null and persists it once. Both the internal retry (both attempts share the reference) and re-dispatching across calls reuse it.
+2. `src/banking/actions.ts` — gates by intent status:
+   - `completed` → returns the stored result (enriched with the real operation via `GET /v1/operations/:reference`); never re-dispatches.
+   - `processing` → reconciles via `GET /v1/operations/:reference`; never re-dispatches.
+   - `created`/`failed` → proceeds, always with the stored reference.
+   - Shared helper `reconcileOutcome`: operation found → `completed` (verified fact); 404 → `failed` (verified absence); query fails → non-terminal `processing` status with the reference to verify later. **Never reports `failed` without evidence.**
+3. `tests/invariants.test.ts` — 4 regression tests with an in-process fake bank (no live services), written test-first (RED observed before the fix): lost-response debits exactly once; rejection before commit → verified `failed`; commit unreachable → recovered to `completed`; unverifiable outcome → `processing` and the retry never re-dispatches.
 
-### Verificación (after) — CONFIRMADA
+### Verification (after) — CONFIRMED
 
-- `npm run typecheck` ✅ · `npm test` → **17/17** (13 originales + 4 nuevos) ✅
-- Repro end-to-end con el mismo script y perfil `lost-response`:
+- `npm run typecheck` ✅ · `npm test` → **17/17** (13 original + 4 new) ✅
+- End-to-end repro with the same script and profile `lost-response`:
 
 ```text
 balance before:              €4002.50
@@ -193,35 +194,35 @@ balance after retry:         €4001.50  (delta -€1.00)
 No double debit observed (fixed?).
 ```
 
-- Transferencia normal bajo perfil `normal`: `completed`, delta exacto de 100 céntimos (sin regresión).
+- Normal transfer under profile `normal`: `completed`, exact delta of 100 cents (no regression).
 
-**Before/after**: €1,00 de intención → €3,00 debitados y estados engañosos **antes**; €1,00 debitado exactamente una vez, reintento sin efectos adicionales y estado siempre verificado **después**.
+**Before/after**: €1.00 of intention → €3.00 debited and misleading statuses **before**; €1.00 debited exactly once, retry without additional effects and status always verified **after**.
 
 ---
 
-## 3. Bug 2: Documentación caducada en las respuestas del asistente
+## 3. Bug 2: Stale documentation in assistant answers
 
-**Fecha**: 28-09-2026 · **Severidad**: alta (evidencia trazable) · **Estado**: RESUELTO · **Rama**: `fix/stale-doc-retrieval`
+**Date**: 28-09-2026 · **Severity**: high (traceable evidence) · **Status**: RESOLVED · **Branch**: `fix/stale-doc-retrieval`
 
-### El problema
+### The problem
 
-El contrato exige: *"Assistant information should rely on applicable documentation and make its evidence traceable"* y avisa que *"Documents can contain historical versions"*. El corpus incluye 80 documentos con versiones históricas y archivados (`archive-*`, vigentes hasta 2026-08-31), y la fecha de referencia del ejercicio es **2026-09-24** (`src/config.ts:18`).
+The contract requires: *"Assistant information should rely on applicable documentation and make its evidence traceable"* and warns that *"Documents can contain historical versions"*. The corpus includes 80 documents with historical and archived versions (`archive-*`, in force until 2026-08-31), and the exercise's reference date is **2026-09-24** (`src/config.ts:18`).
 
-### Causa raíz (lectura de código)
+### Root cause (code reading)
 
-1. `src/ingestion/chunker.ts:13-16`: `title/version/validFrom/validTo` solo se rellenaban en el chunk de offset 0; el resto quedaban en `null` → la UI mostraba "Version —" y el filtrado por vigencia por chunk era imposible.
-2. `src/retrieval/search.ts:18`: solo filtraba por audiencia (`public`/operador). Documentos archivados y sustituidos competían en el ranking con la política vigente → el asistente podía responder con comisiones/reglas caducadas.
+1. `src/ingestion/chunker.ts:13-16`: `title/version/validFrom/validTo` were only populated on the offset-0 chunk; the rest stayed `null` → the UI showed "Version —" and per-chunk validity filtering was impossible.
+2. `src/retrieval/search.ts:18`: it only filtered by audience (`public`/operator). Archived and superseded documents competed in the ranking with the in-force policy → the assistant could answer with expired fees/rules.
 
-### Arreglo (implementado)
+### Fix (implemented)
 
-1. `chunker.ts`: metadatos del documento propagados a **todos** los chunks. El id del chunk es `sha256(docId:offset:text)` (sin metadatos) → ids estables, el cache de embeddings sigue funcionando (re-ingesta sin coste de API).
-2. `search.ts`: filtro de vigencia sobre `referenceDate` con límites inclusivos y `null` = abierto (`validFrom <= ref && (validTo == null || validTo >= ref)`), encima del filtro de audiencia. Formato uniforme `YYYY-MM-DD` en todo el corpus (verificado) → comparación lexicográfica exacta.
-3. Re-ingesta + export del índice portable (356 chunks, todos con metadatos completos).
+1. `chunker.ts`: document metadata propagated to **all** chunks. The chunk id is `sha256(docId:offset:text)` (without metadata) → stable ids, the embeddings cache keeps working (re-ingestion at no API cost).
+2. `search.ts`: validity filter on `referenceDate` with inclusive bounds and `null` = open (`validFrom <= ref && (validTo == null || validTo >= ref)`), on top of the audience filter. Uniform `YYYY-MM-DD` format across the corpus (verified) → exact lexicographic comparison.
+3. Re-ingestion + export of the portable index (356 chunks, all with full metadata).
 
-### Verificación (after) — CONFIRMADA
+### Verification (after) — CONFIRMED
 
-- `npm test` → **19/19** (2 tests nuevos: propagación de metadatos; doc caducado con score 1.0 excluido aunque ganaría el ranking, vector sintético cacheado → cero llamadas de API).
-- Búsqueda en vivo `POST /api/search {"query":"Aurora account fees"}` (cliente):
+- `npm test` → **19/19** (2 new tests: metadata propagation; expired document with score 1.0 excluded even though it would win the ranking, cached synthetic vector → zero API calls).
+- Live search `POST /api/search {"query":"Aurora account fees"}` (client):
 
 ```text
 aurora-fees-2026        | v2 2026-09-01 -> None | 0.688
@@ -231,120 +232,114 @@ aurora-conditions-2026  | v2 2026-09-01 -> None | 0.605
 aurora-fees-2026        | v2 2026-09-01 -> None | 0.576
 ```
 
-Cero resultados `archive-*`; todos los chunks con versión y vigencia pobladas (`GET /api/documents/:id/chunks`).
+Zero `archive-*` results; all chunks with version and validity populated (`GET /api/documents/:id/chunks`).
 
-### Nota de diseño
+### Design note
 
-El filtro de vigencia aplica también al rol operador. La biblioteca de documentos (`GET /api/documents`) sigue mostrando TODO el corpus incluidos históricos; solo la *búsqueda que alimenta respuestas* usa exclusivamente documentos vigentes. Si se quisiera que los operadores busquen versiones históricas, sería una decisión de producto aparte.
-
----
+The validity filter also applies to the operator role. The document library (`GET /api/documents`) still shows the WHOLE corpus including historical documents; only the *search that feeds answers* uses in-force documents exclusively. If operators were to search historical versions, that would be a separate product decision.
 
 ---
 
-## 4. Parte 2 — Trust Layer (feature distintiva)
+---
 
-**Fecha**: 28-09-2026 · **Estado**: IMPLEMENTADA · **Rama**: `feature/trust-layer` (commits `1b1099a` + `53d3333`)
+## 4. Part 2 — Trust Layer (distinctive feature)
 
-### La idea
+**Date**: 28-09-2026 · **Status**: IMPLEMENTED · **Branch**: `feature/trust-layer` (commits `1b1099a` + `53d3333`)
 
-Una capa de confianza sobre el asistente que cubre dos contratos incumplidos a la vez:
+### The idea
 
-1. **Confirmation cards**: el agente NUNCA mueve dinero sin revisión explícita — crea una propuesta (monto/origen/destino) que expira en 10 minutos, el cliente la confirma en el panel "Proposals awaiting confirmation", y solo entonces se despacha con garantías exactly-once. Recibo con `reference` verificable vía `operation_status`.
-2. **Respuestas con citas verificables**: cada afirmación de política/tarifa/límite lleva cita `[docId vN]` renderizada como chip clicable que abre el documento citado en la biblioteca. Sin evidencia → se admite y se ofrece siguiente paso. Prohibido inventar tarifas o "prácticas bancarias típicas".
+A trust layer on top of the assistant that covers two unmet contracts at once:
 
-### Por qué es distintiva
+1. **Confirmation cards**: the agent NEVER moves money without explicit review — it creates a proposal (amount/source/destination) that expires in 10 minutes, the customer confirms it in the "Proposals awaiting confirmation" panel, and only then is it dispatched with exactly-once guarantees. Receipt with a `reference` verifiable via `operation_status`.
+2. **Answers with verifiable citations**: every policy/fee/limit claim carries a `[docId vN]` citation rendered as a clickable chip that opens the cited document in the library. Without evidence → admit it and offer a next step. Making up fees or "typical banking practices" is forbidden.
 
-- No es un chatbot genérico: **cada respuesta es auditable** (cita → documento → versión → vigencia) y **cada operación es reversible-a-la-vista** (propuesta → confirmación → recibo).
-- Compone todo lo anterior: docs vigentes (Bug 2), intents exactly-once (Bug 1) y ahora la revisión explícita — la demo encadena los tres.
+### Why it is distinctive
 
-### Implementación
+- It is not a generic chatbot: **every answer is auditable** (citation → document → version → validity window) and **every operation is reversible at a glance** (proposal → confirmation → receipt).
+- It composes everything built before: in-force documents (Bug 2), exactly-once intents (Bug 1) and now explicit review — the demo chains all three.
+
+### Implementation
 
 **Backend (`1b1099a`)** — `src/banking/authorization.ts` + `app/api/[...path]/route.ts`:
-- `authorizeTransfer` sin `approvalId` → crea/reusa propuesta pendiente por intent (TTL 10 min) y devuelve `requires_confirmation` **sin despachar**.
-- Camino confirm → valida 404/409-consumida/410-expirada/409-payload-alturada y consume **atómicamente** (`UPDATE ... WHERE consumed_at IS NULL` + `changes===1`).
-- 5 tests TDD nuevos; los tests exactly-once anteriores actualizados para pasar por la confirmación (garantías intactas). **25/25 tests**.
+- `authorizeTransfer` without `approvalId` → creates/reuses a pending proposal per intent (10 min TTL) and returns `requires_confirmation` **without dispatching**.
+- Confirm path → validates 404/409-consumed/410-expired/409-altered-payload and consumes **atomically** (`UPDATE ... WHERE consumed_at IS NULL` + `changes===1`).
+- 5 new TDD tests; the previous exactly-once tests updated to go through confirmation (guarantees intact). **25/25 tests**.
 
-**Agente + UI (`53d3333`)** — `src/agent/prompt.ts` + `src/agent/run.ts` + `app/page.tsx`:
-- Postura evidence-first: fuentes vigentes > conocimiento de fondo; citas obligatorias; sin evidencia → admitirlo + siguiente paso (`request_human` / sección Documents).
-- Transferencia `requires_confirmation` → el agente explica que **no** se ejecutó y pide confirmar en el panel.
-- Chips de cita accesibles (aria-label) que abren el documento citado.
+**Agent + UI (`53d3333`)** — `src/agent/prompt.ts` + `src/agent/run.ts` + `app/page.tsx`:
+- Evidence-first stance: in-force sources > background knowledge; mandatory citations; no evidence → admit it + next step (`request_human` / Documents section).
+- A `requires_confirmation` transfer → the agent explains that it was **not** executed and asks to confirm in the panel.
+- Accessible citation chips (aria-label) that open the cited document.
 
-### Pulido de UX (rama `feature/confirmation-ux`, commit `4236adf`)
+### UX polish (branch `feature/confirmation-ux`, commit `4236adf`)
 
-**Hallazgo en la primera sesión real de UI**: el flujo funcionaba correctamente (4 propuestas confirmadas y ejecutadas exactamente una vez), pero la propuesta aparecía solo en el panel inferior, fuera de vista, sin indicar su caducidad — la transferencia parecía "colgada". Mejoras aplicadas (solo `app/page.tsx`):
+**Finding from the first real UI session**: the flow worked correctly (4 proposals confirmed and executed exactly once), but the proposal only appeared in the bottom panel, out of view, without indicating its expiry — the transfer looked "hung". Improvements applied (`app/page.tsx` only):
 
-- **Tarjeta inline** bajo el formulario de transferencia (monto, origen→destino con nombres, concepto) con Confirm y Discard, y auto-scroll al aparecer.
-- **Cuenta atrás en vivo** (m:ss) en la tarjeta y en cada propuesta del panel.
-- **Estado expirado** con botón "Request again" que re-llena el formulario con los mismos datos.
-- Outcomes explícitos: éxito limpia la tarjeta; "already confirmed" limpia y refresca; "expired" pasa a modo re-petición.
+- **Inline card** under the transfer form (amount, source→destination with names, concept) with Confirm and Discard, and auto-scroll when it appears.
+- **Live countdown** (m:ss) on the card and on every proposal in the panel.
+- **Expired state** with a "Request again" button that re-fills the form with the same data.
+- Explicit outcomes: success clears the card; "already confirmed" clears and refreshes; "expired" switches to re-request mode.
 
-Esto también es material de video: muestra el ciclo completo **feedback real → diagnóstico con evidencia (DB + logs) → mejora de producto**.
+This is also video material: it shows the full cycle **real feedback → diagnosis with evidence (DB + logs) → product improvement**.
 
-**Segunda iteración (mismo día, commit `0a01b4f`)**: en la prueba real, el usuario confirmó desde el panel y la transferencia se ejecutó, pero **el chat no lo reflejaba** — seguía diciendo "has not been sent", sin recibo y sin forma de confirmar desde la propia conversación. Diagnóstico con evidencia: aprobación `4e31a8bf` consumida + intent `completed` en la DB vs. último mensaje del asistente congelado en el aviso previo. Arreglo:
+**Second iteration (same day, commit `0a01b4f`)**: in the real test, the user confirmed from the panel and the transfer executed, but **the chat did not reflect it** — it kept saying "has not been sent", with no receipt and no way to confirm from the conversation itself. Diagnosis with evidence: approval `4e31a8bf` consumed + intent `completed` in the DB vs. the last assistant message frozen at the pre-confirmation notice. Fix:
 
-- La conversación ahora devuelve `pendingApprovals` y el chat muestra **la tarjeta de confirmación dentro de la conversación** (misma cuenta atrás/Confirm/Discard/reintento, un solo estado y un solo intervalo compartidos con el formulario y el panel).
-- Al confirmar, el backend añade **un recibo verificado** al hilo: monto, concepto, reference real y etiquetas de cuentas resueltas del banco (fallback a ids; nunca inventado). Nada se añade si el resultado no es `completed`.
-- La conversación se recarga sola tras confirmar → el recibo aparece sin refrescar, y el operador lo ve en el historial.
+- The conversation now returns `pendingApprovals` and the chat shows **the confirmation card inside the conversation** (same countdown/Confirm/Discard/retry, a single state and a single interval shared with the form and the panel).
+- On confirm, the backend adds **one verified receipt** to the thread: amount, concept, real reference and account labels resolved from the bank (fallback to ids; never invented). Nothing is added if the outcome is not `completed`.
+- The conversation reloads itself after confirming → the receipt appears without refreshing, and the operator sees it in the history.
 
-Verificado: 3 tests nuevos (32/32), ciclo en vivo por API (propuesta → `pendingApprovals` → confirm → recibo con reference → segundo confirm 409 sin mensaje extra).
+Verified: 3 new tests (32/32), live cycle via API (proposal → `pendingApprovals` → confirm → receipt with reference → second confirm 409 with no extra message).
 
-**Tercera iteración (mismo día, commit `fcd0405`)**: al probar "Discard", el usuario reportó que la propuesta seguía apareciendo para confirmar, incluso fuera de la conversación. Causa: Discard era cosmético (ocultaba la tarjeta localmente) y la propuesta seguía viva en el servidor — la tabla `approvals` no tenía estado de cancelación. Arreglo:
+**Third iteration (same day, commit `fcd0405`)**: when testing "Discard", the user reported that the proposal kept appearing for confirmation, even outside the conversation. Cause: Discard was cosmetic (it hid the card locally) and the proposal stayed alive on the server — the `approvals` table had no cancellation state. Fix:
 
-- Columna `cancelled_at` en `approvals` con **migración idempotente** (`PRAGMA table_info` + `ALTER TABLE` guardado) para bases existentes.
-- `POST /api/approvals/:id/cancel`: cancelación atómica (`UPDATE ... WHERE consumed_at IS NULL AND cancelled_at IS NULL`) e idempotente; 409 si ya fue confirmada; 404 para propuestas ajenas.
-- Filtros `cancelled_at IS NULL` en dashboard, `pendingApprovals` de la conversación y en el confirm (que ahora responde con mensaje claro y **sin ejecutar nada**).
-- UI: Discard llama al endpoint, avisa "Proposal discarded. The transfer was not sent." y refresca panel + conversación.
+- `cancelled_at` column on `approvals` with an **idempotent migration** (`PRAGMA table_info` + guarded `ALTER TABLE`) for existing databases.
+- `POST /api/approvals/:id/cancel`: atomic (`UPDATE ... WHERE consumed_at IS NULL AND cancelled_at IS NULL`) and idempotent cancellation; 409 if it was already confirmed; 404 for proposals that are not one's own.
+- `cancelled_at IS NULL` filters in the dashboard, in the conversation's `pendingApprovals` and in confirm (which now answers with a clear message and **executes nothing**).
+- UI: Discard calls the endpoint, shows "Proposal discarded. The transfer was not sent." and refreshes panel + conversation.
 
-Verificado en vivo: cancelar → desaparece de ambos lados; re-cancelar idempotente; confirmar la cancelada → 409 sin débito (saldo intacto); 5 tests nuevos (**37/37**).
+Verified live: cancel → it disappears on both sides; re-cancel is idempotent; confirming the cancelled one → 409 with no debit (balance intact); 5 new tests (**37/37**).
 
-**Cuarta iteración (commit `959c4c5`)**: el descarte debía quedar también registrado en el chat (como el recibo de la confirmación). Se añade un mensaje de cancelación construido solo con el payload almacenado — *"Transfer cancelled: EUR 4.50 from your Aurora account to Bruno Vidal's Horizon account (concept: parent cancel msg) was not sent. No money has moved."* — exactamente una vez por cancelación (sin duplicados en re-cancel), con etiquetas resueltas del banco y fallback a ids. 3 tests nuevos (**40/40**).
+**Fourth iteration (commit `959c4c5`)**: the discard also had to be recorded in the chat (like the confirmation receipt). A cancellation message is added, built only from the stored payload — *"Transfer cancelled: EUR 4.50 from your Aurora account to Bruno Vidal's Horizon account (concept: parent cancel msg) was not sent. No money has moved."* — exactly once per cancellation (no duplicates on re-cancel), with labels resolved from the bank and fallback to ids. 3 new tests (**40/40**).
 
-**Quinta iteración (commit `221ecf7`)**: el usuario reportó que la tarjeta de confirmación ya no aparecía al pedir una transferencia. Diagnóstico con la tabla `events` (el observable correcto de las tool calls del agente): la conversación mostraba **solo `list_accounts`**, sin ningún evento `transfer_money` ni intents — el modelo respondió en prosa prometiendo una confirmación que nunca creó. Causa: el prompt evidencia-first describía el comportamiento posterior a `requires_confirmation` sin exigir la llamada al tool. Arreglo: reglas imperativas (llamar a `transfer_money` en el mismo turno con datos completos; nunca presentar un resumen en prosa como propuesta; citas solo para documentación). Verificado en vivo con el observable correcto: `list_accounts → transfer_money → requires_confirmation` + propuesta real en la conversación. 40/40 tests.
+**Fifth iteration (commit `221ecf7`)**: the user reported that the confirmation card no longer appeared when requesting a transfer. Diagnosis with the `events` table (the correct observable for the agent's tool calls): the conversation showed **only `list_accounts`**, with no `transfer_money` event and no intents — the model answered in prose promising a confirmation it never created. Cause: the evidence-first prompt described the behavior after `requires_confirmation` without requiring the tool call. Fix: imperative rules (call `transfer_money` in the same turn with complete data; never present a prose summary as a proposal; citations only for documentation). Verified live with the correct observable: `list_accounts → transfer_money → requires_confirmation` + a real proposal in the conversation. 40/40 tests.
 
-**Sexta iteración (commit `b6b953e`)**: el usuario vio en el panel propuestas pendientes que no correspondían a su conversación — eran **restos de los smoke tests** del asistente y del worker sobre el mismo usuario (limpiados con la API: 0 pendientes; además se eliminaron 4 conversaciones vacías de prueba). Además se corrigieron dos problemas de producto de fondo:
+**Sixth iteration (commit `b6b953e`)**: the user saw pending proposals in the panel that did not belong to their conversation — they were **leftovers from the smoke tests** run by the assistant and the worker against the same user (cleaned via the API: 0 pending; 4 empty test conversations were also removed). Two underlying product problems were also fixed:
 
-- **Acumulación de propuestas**: cada turno del agente creaba una propuesta nueva, así que los reintentos se apilaban. Ahora, en una conversación, una petición **idéntica reutiliza** la propuesta existente (mismo `approvalId`) y una **distinta la reemplaza** (la anterior se cancela en silencio, sin mensaje de chat). El UPDATE está acotado por `intents.conversation_id`, así que nunca toca otras conversaciones ni propuestas sin conversación.
-- **Panel duplicado**: "Proposals awaiting confirmation" se renderizaba también bajo el chat, compitiendo con la tarjeta inline y mostrando propuestas de otras conversaciones. Ahora vive solo en Overview; en el chat manda la tarjeta.
+- **Proposal accumulation**: every agent turn created a new proposal, so retries piled up. Now, within a conversation, an **identical request reuses** the existing proposal (same `approvalId`) and a **different one supersedes it** (the previous one is silently cancelled, with no chat message). The UPDATE is scoped by `intents.conversation_id`, so it never touches other conversations or proposals without a conversation.
+- **Duplicate panel**: "Proposals awaiting confirmation" was also rendered under the chat, competing with the inline card and showing proposals from other conversations. It now lives only in Overview; in the chat the card rules.
 
-Verificado en vivo: payload distinto → 1 pendiente y la superseded responde 409; payload idéntico → mismo `approvalId`; conversación y dashboard muestran exactamente una. 4 tests nuevos (**44/44**).
+Verified live: different payload → 1 pending and the superseded one answers 409; identical payload → same `approvalId`; conversation and dashboard show exactly one. 4 new tests (**44/44**).
 
-**Lección de método**: no contaminar los datos de demo con smoke tests — limpiar las propuestas al terminar cada verificación.
+**Method lesson**: do not pollute demo data with smoke tests — clean up the proposals after every verification.
 
-### Demo script para el video (guión sugerido)
+### Demo script
 
-1. **Cita verificable**: "What is the monthly fee of the Aurora account and when is it waived?" → respuesta con chip `[aurora-fees-2026 v2]` → click → abre el documento en la biblioteca. (Verificado: la respuesta cita condiciones exactas — €6/mes, exención con salario ≥€1.200 + 3 compras.)
-2. **Sin invención**: "Can I transfer 999 million euros?" → cita el límite documentado en vez de inventarlo (`[aurora-operations-2026 v2]`).
-3. **Confirmación explícita**: "Send 1 euro from my Aurora account to Bruno, concept coffee" → el agente muestra la propuesta y aclara que NO se ejecutó → panel "Proposals awaiting confirmation" → Confirm → recibo con reference.
-4. **Double-confirm bloqueado**: segundo click en Confirm → 409 "This proposal was already confirmed."
-5. **Exactly-once bajo fallo**: con `npm run scenario -- lost-response`, repetir el flujo → exactamente €1 debitado (`scripts/repro-double-debit.ts` imprime "No double debit observed").
-6. **Cierre**: saldos consistentes entre UI y banco en todo momento.
+The recording script lives in `submission/VIDEO-SCRIPT.md` (a tight four-minute take, provided in Spanish and English with exact commands, prompts and expected outputs).
 
----
 
-## 5. Bug 3 (resto) + Bug 4: Visibilidad de operador y telemetría
+## 5. Bug 3 (remainder) + Bug 4: Operator visibility and telemetry
 
-**Fecha**: 28-09-2026 · **Severidad**: media-alta (resolución de casos) · **Estado**: RESUELTO · **Rama**: `fix/operator-visibility` (commit `691c5b1`)
+**Date**: 2026-09-28 · **Severity**: medium-high (case resolution) · **Status**: RESOLVED · **Branch**: `fix/operator-visibility` (commit `691c5b1`)
 
-### El problema
+### The problem
 
-El contrato exige: *"Operators need to understand the conversation, relevant steps, and effects"* y *"Historical evidence that was never recorded must not be invented"*. Pero:
+The contract requires: *"Operators need to understand the conversation, relevant steps, and effects"* and *"Historical evidence that was never recorded must not be invented"*. But:
 
-1. `src/operator/view.ts`: `caseDetail` devolvía `history: [], events: [], intents: [], bank: null` hardcodeados — la vista de caso era decorativa.
-2. `src/telemetry.ts`: `recordEvent` recibía args/outputs/duración completos y persistía solo `{tool, status}` — la evidencia se descartaba al grabarse.
-3. Ninguna ruta mutaba `incidents.status` — **los casos nunca se podían cerrar**.
-4. El endpoint del banco para operadores (`GET /v1/operator/customer`) nunca era llamado por la app.
+1. `src/operator/view.ts`: `caseDetail` returned hardcoded `history: [], events: [], intents: [], bank: null` — the case view was decorative.
+2. `src/telemetry.ts`: `recordEvent` received full args/outputs/duration and persisted only `{tool, status}` — evidence was discarded as it was recorded.
+3. No route mutated `incidents.status` — **cases could never be closed**.
+4. The bank's operator endpoint (`GET /v1/operator/customer`) was never called by the app.
 
-### Arreglo (implementado)
+### Fix (implemented)
 
-- Telemetría con payload completo (args, outputs, durationMs verbatim).
-- `caseDetail` poblado: conversación (últimos 50, orden cronológico), eventos (últimos 100 con payloads parseados), intents (estado/reference/operation_id) y operaciones bancarias reales (actor firmante = operador).
-- **Gaps honestos**: sin actividad grabada o fallo del banco se **declara** en `gaps`; JSON malformado se muestra tal cual, nunca se dropea ni se inventa.
-- `POST /api/incidents/:id/close` (operador; 404/409) + botón "Resolve case" en la UI.
+- Telemetry with full payload (args, outputs, durationMs verbatim).
+- `caseDetail` populated: conversation (last 50, chronological order), events (last 100 with parsed payloads), intents (status/reference/operation_id) and real bank operations (signing actor = operator).
+- **Honest gaps**: with no recorded activity or a bank failure it is **declared** in `gaps`; malformed JSON is shown as-is, never dropped or invented.
+- `POST /api/incidents/:id/close` (operator; 404/409) + "Resolve case" button in the UI.
 
-### Verificación (after) — CONFIRMADA
+### Verification (after) — CONFIRMED
 
-- `npm test` → **29/29** (4 tests nuevos: telemetría íntegra; caseDetail poblado con aserción de actor operador; banco caído → gaps sin fabricación; cierre 404/403/200/409).
-- En vivo: caso creado por Lucía (transferencia €1 + request_human) → Marta ve 2 mensajes, 8 eventos con `arguments/output/durationMs`, 9 operaciones bancarias incluida la de €1,00 con su reference → cierra el caso → segundo cierre → 409.
+- `npm test` → **29/29** (4 new tests: full telemetry; populated caseDetail with operator-actor assertion; bank down → gaps without fabrication; closing 404/403/200/409).
+- Live: case created by Lucía (€1 transfer + request_human) → Marta sees 2 messages, 8 events with `arguments/output/durationMs`, 9 bank operations including the €1.00 one with its reference → closes the case → second close → 409.
 
 ```text
 history: 2 | events: 8 | intents: 1 | bank ops: 9
@@ -353,39 +348,39 @@ bank op: {'amountCents': 100, 'status': 'completed', 'reference': 'ba169fdb-...'
 status: closed
 ```
 
-### Nota de demo
+### Demo note
 
-Este fix cierra el círculo del video: el mismo caso muestra la propuesta de confirmación en la telemetría (`requires_confirmation` con approvalId), la confirmación, la operación exactly-once y el cierre por el operador — todo con evidencia grabada, no narrada.
+This fix closes the video's loop: the same case shows the confirmation proposal in the telemetry (`requires_confirmation` with approvalId), the confirmation, the exactly-once operation and the closing by the operator — all with recorded evidence, not narrated.
 
 ---
 
-## 6. Parte 2 (extensión) — Coach de comisiones
+## 6. Part 2 (extension) — Fee Coach
 
-**Fecha**: 29-09-2026 · **Estado**: IMPLEMENTADO · **Rama**: `feature/fee-coach` (commit `17a0b34`)
+**Date**: 2026-09-29 · **Status**: IMPLEMENTED · **Branch**: `feature/fee-coach` (commit `17a0b34`)
 
-### La idea
+### The idea
 
-*"¿me van a cobrar comisión este mes?"* — el agente **cruza los movimientos reales del cliente con la política vigente** y responde con la cifra, las condiciones evaluadas una por una y la cita del documento. **La decisión la toma código puro y testeable; el modelo solo la presenta.**
+*"¿me van a cobrar comisión este mes?"* — the agent **cross-references the customer's real movements with the in-force policy** and answers with the figure, the conditions evaluated one by one and the document citation. **The decision is made by pure, testable code; the model only presents it.**
 
-### Por qué es distintiva
+### Why it is distinctive
 
-Un chatbot genérico puede *explicar* la política de comisiones; este **la evalúa contra el ledger del cliente**. Y compone todo lo construido antes: ledger verificado (exactly-once y reconciliación), documentos filtrados por vigencia, citas trazables y honestidad explícita sobre lo que no se puede saber.
+A generic chatbot can *explain* the fee policy; this one **evaluates it against the customer's ledger**. And it composes everything built before: verified ledger (exactly-once and reconciliation), documents filtered by validity, traceable citations and explicit honesty about what cannot be known.
 
-### Cómo decide (sin LLM)
+### How it decides (no LLM)
 
-`src/banking/feePolicy.ts`, función pura y sin efectos:
+`src/banking/feePolicy.ts`, a pure, side-effect-free function:
 
-1. **Etiqueta de la cuenta → producto** (`"Aurora account"` → `aurora`).
-2. **Documento vigente** desde el índice, con la misma semántica de vigencia que la búsqueda (a la fecha de referencia 2026-09-24); los `archive-*` **nunca** son candidatos.
-3. **La comisión se parsea del TEXTO del documento**, no de una tabla hardcodeada: cubre `"The Aurora account monthly fee is EUR 6."` y `"The monthly fee for Horizon is EUR 3."`. Si el texto no la declara → `undetermined`, nunca una cifra inventada.
-4. **La regla de exención también sale del texto**: solo Aurora la tiene; los demás documentos la niegan explícitamente. Umbrales parseados: `EUR 1,200` y `three settled card purchases`. Si menciona una exención que no se puede parsear → `undetermined`.
-5. **Condiciones contra los movimientos del mes del cliente**: nómina (positivo con `salary`, ≥ umbral) y compras con tarjeta (negativos excluyendo transferencias y saldo inicial), con la evidencia real citada.
-6. **`caveats` honestos**: el ledger **no registra estado de liquidación** (los movimientos posteados se tratan como liquidados) y los posteos cerca del límite de mes pueden caer en el mes contiguo.
+1. **Account label → product** (`"Aurora account"` → `aurora`).
+2. **In-force document** from the index, with the same validity semantics as search (at reference date 2026-09-24); `archive-*` documents are **never** candidates.
+3. **The fee is parsed from the document TEXT**, not from a hardcoded table: it covers `"The Aurora account monthly fee is EUR 6."` and `"The monthly fee for Horizon is EUR 3."`. If the text does not declare it → `undetermined`, never an invented figure.
+4. **The waiver rule also comes from the text**: only Aurora has one; the other documents explicitly deny it. Parsed thresholds: `EUR 1,200` and `three settled card purchases`. If it mentions a waiver that cannot be parsed → `undetermined`.
+5. **Conditions against the customer's movements of the month**: salary (positive with `salary`, ≥ threshold) and card purchases (negatives excluding transfers and the initial balance), with the real evidence cited.
+6. **Honest `caveats`**: the ledger **does not record settlement status** (posted movements are treated as settled) and postings near the month boundary may fall into the adjacent month.
 
-### Verificación
+### Verification
 
-- **52/52 tests** (8 nuevos): parseo de los cinco documentos vigentes reales (**Aurora 6 · Horizon 3 · Cloud 0 · Community 2 · Family 5**), exención detectada solo en Aurora, matriz de condiciones con ledgers sintéticos (con/sin nómina, 0–4 compras, transferencias excluidas), cuenta de ahorro → `undetermined`, **archivado nunca seleccionado**, caveat de liquidación, exención imparseable → `undetermined`, y la tool end-to-end contra el banco fake.
-- **En vivo (modelo real)**:
+- **52/52 tests** (8 new): parsing of the five real in-force documents (**Aurora 6 · Horizon 3 · Cloud 0 · Community 2 · Family 5**), waiver detected only in Aurora, condition matrix with synthetic ledgers (with/without salary, 0–4 purchases, transfers excluded), savings account → `undetermined`, **archived document never selected**, settlement caveat, unparseable waiver → `undetermined`, and the tool end-to-end against the fake bank.
+- **Live (real model)**:
 
 ```text
 "Will I be charged a fee for my Aurora account this month?"
@@ -402,41 +397,76 @@ Personal savings: Undetermined. No in-force fee policy was found for
 this account, so I can't confirm whether you'll be charged. …
 ```
 
-Nota de precisión: en una primera pasada el modelo adjuntó la cita de Aurora al caveat de la cuenta de ahorro (cita mal atribuida). Se corrigió la guía del prompt — la cita solo puede acompañar a la afirmación que respalda — y se re-verificó: la respuesta de ahorros ya no cita ninguna política.
+Accuracy note: on a first pass the model attached the Aurora citation to the savings account's caveat (misattributed citation). The prompt guide was tightened — a citation may only accompany the claim it supports — and it was re-verified: the savings answer no longer cites any policy.
 
-### Límites declarados
+### Declared limits
 
-- El parseo tolera el corpus actual, no cualquier redacción futura: ante una reformulación cae en `undetermined` (seguro, aunque silencioso), y hay un test que fija ese comportamiento.
-- El mes evaluado deriva de la fecha de referencia (2026-09-24), no del reloj real; un despliegue real debería cambiar la fuente de "ahora".
-- `/v1/movements` devuelve hasta 100 movimientos: una cuenta muy activa podría desplazar compras del mes fuera de la ventana.
+- The parsing tolerates the current corpus, not any future wording: faced with a rephrasing it falls back to `undetermined` (safe, though silent), and there is a test that pins that behavior.
+- The evaluated month derives from the reference date (2026-09-24), not the real clock; a real deployment should change the source of "now".
+- `/v1/movements` returns up to 100 movements: a very active account could push the month's purchases out of the window.
 
 
 ---
 
-## Estado final: hecho / verificado / pendiente
+---
 
-### Terminado
+## 7. Closing the declared pending items
 
-**Parte 1 (preparación para el lanzamiento)** — 4 familias de defectos corregidas, cada una mapeada a su cláusula en §0:
-1. Débito múltiple en reintentos → exactly-once con reference estable, gates de intent y reconciliación de resultados desconocidos.
-2. Documentación caducada alimentando respuestas → metadatos por chunk + filtro de vigencia a la fecha de referencia + re-ingesta del índice.
-3. Confirmación explícita inexistente → propuestas con caducidad, consumo atómico, cancelación real (Discard), reutilización/supersede y registro del desenlace en la conversación.
-4. Operador ciego → telemetría íntegra, detalle de caso con conversación/actividad/operaciones bancarias, "gaps" honestos y cierre de casos.
+The submission's own limitation list flagged six pending items. All of them are now closed, each with its own verification, plus the evaluation seam they exposed.
 
-**Parte 2 (feature distintiva)** — *Trust Layer*: confirmación inline en el chat con cuenta atrás y re-petición + respuestas con citas verificables (documento, versión, vigencia) y conducta sin evidencia. **Extensión**: *Coach de comisiones* — motor de reglas determinista que cruza el ledger del cliente con la política vigente (§6).
+### 7.1 Manual form identity and agent-round signal
 
-### Verificado
+- **The transfer form keeps its submission identity**: the same payload signature reuses the same `intentId`, and the no-conversation path reuses an identical pending proposal for the user, so a double click or a repeat submit cannot create two proposals. Verified live with two **simultaneous** submits: one approval, one pending proposal.
+- **Agent round-budget exhaustion** now records a `run.incomplete` telemetry event and the final answer states that the request could not be completed within the allowed steps and offers a retry or human support, instead of a silent generic fallback.
+- **`bankRequest`** parses the body defensively: a non-JSON 5xx raises `BankError` with the real status and a clean message rather than a raw `SyntaxError` surfacing as an unrelated 500.
+- **`GET /api/people`** stays public on purpose (the person selector is how a session is created) but is now an explicit, documented decision locked by a test.
 
-- **52 tests** en `npm test` (todos pasan) + `npm run typecheck` limpio.
-- **Reproducción reproducible del bug crítico**: `scripts/repro-double-debit.ts` (€1,00 → €3,00 antes; €1,00 exacto después).
-- **Eval medido antes/después** (§0c): BEFORE 1/14 pasan · 0/14 citan → AFTER 14/14 pasan · 12/12 de las citas exigidas; 28 respuestas sin ninguna cifra inventada.
-- **Casos sembrados del propio starter** (§0b) re-verificados en vivo tras los arreglos.
-- **Recorrido funcional completo**: pedir → tarjeta → confirmar (recibo con reference) → descartar (registro) → expirar (re-petición) → auditar en la vista de operador y cerrar el caso.
+### 7.2 Retrieval quality
 
-### Pendiente (declarado)
+- **Section-aware chunking**: documents split on level-2 headings with a 650-character sub-split bound; the corpus yields **458 chunks** (was 356) and the Aurora waiver conditions now travel in one clean section chunk.
+- **Embedding prefix**: chunks are embedded as `title · documentId · vN` plus the text while the stored and cited text stays clean, so the boilerplate shared by all 80 documents no longer dominates the vectors.
+- **Historical retrieval**: a deterministic classifier over the query (`before`, `previously`, `used to`, `no longer`, `old`, `historical`, `archive`, `last year`, an explicit past year...) enables archived documents on both the tool path and the first automatic retrieval pass. The default stays in-force-only.
 
-1. **`intentId` por envío del formulario**: hoy el endpoint genera uno aleatorio por submit; el flujo de propuesta + una-propuesta-por-conversación lo mitiga (no hay doble débito automático), pero un doble clic sin confirmar puede dejar dos propuestas si no hay conversación abierta.
-2. **Chunking por secciones y prefijo de producto al embeber**: mejoraría la precisión de recuperación (el boilerplate común a los 80 documentos domina los embeddings). No abordado; el filtro de vigencia y las citas ya evitan el error material.
-3. **Recuperación histórica**: los documentos archivados no se recuperan para preguntas genuinamente históricas (limitación declarada en §0c).
-4. **Entrega**: grabar el video (guion en §4), mergear la cadena de ramas a `dev` y empaquetar el ZIP (sin `.env*`, `node_modules/`, `.next/`, `.git/`, `.data/`).
-5. **Hallazgos menores no abordados** (documentados, no corregidos): el bucle del agente se queda sin señal cuando agota las 7 rondas; `bankRequest` puede lanzar si un 5xx no trae JSON; `/api/people` no requiere sesión.
+Live, all three verified: the published Aurora fee answers **EUR 6** with `[aurora-fees-2026 v2]`; "this month" answers **EUR 0** with both waiver conditions and their ledger evidence; the historical question answers **EUR 8** with `[archive-aurora-9 v1]` and states explicitly that it no longer applies.
+
+### 7.3 The evaluation seam this exposed (honest fix)
+
+Block 2 made the eval go from 14/14 to 12/14, and **the product was right while the criterion was wrong**. The ambiguous question "What is the monthly fee of my Aurora account?" now routes to the deterministic fee engine, which answers **EUR 0** because this customer meets both waiver conditions, exactly as the engine's own tests assert. The old criterion demanded the published EUR 6.
+
+Rather than loosening a criterion, the two intents were separated into two questions with strict criteria each: "What is the published monthly fee for the Aurora account?" (EUR 6, cited) and "Will I be charged a fee for my Aurora account this month?" (EUR 0 / waiver, cited).
+
+| Round | Turns | Passed | Cited |
+|---|---|---|---|
+| r2 (before block 2) | 14 | 14/14 | 12/14 (12/12 required) |
+| r3 (after block 2, old criteria) | 14 | 12/14 (criterion artefact) | 13/14 |
+| **r4 (split criteria)** | **16** | **16/16** | **14/16 (14/14 required)** |
+
+A latent seam found while closing this: `restoreIndex()` seeded the shipped embedding cache under the raw chunk text while the restored vector came from the prefixed input, so a query string equal to a chunk's clean text could have hit a wrongly keyed vector. It is now keyed consistently with the ingest path, the shipped index was re-exported, and a test locks it.
+
+## Final state: done / verified / pending
+
+### Done
+
+**Part 1 (launch readiness)** — 4 defect families fixed, each mapped to its clause in §0:
+1. Multiple debit on retries → exactly-once with a stable reference, intent gates and reconciliation of unknown outcomes.
+2. Stale documentation feeding answers → per-chunk metadata + validity filter at the reference date + re-ingestion of the index.
+3. Missing explicit confirmation → proposals with expiry, atomic consumption, real cancellation (Discard), reuse/supersede and outcome recorded in the conversation.
+4. Blind operator → full telemetry, case detail with conversation/activity/bank operations, honest "gaps" and case closing.
+
+**Part 2 (distinctive feature)** — *Trust Layer*: inline confirmation in the chat with countdown and re-request + answers with verifiable citations (document, version, validity window) and no-evidence behavior. **Extension**: *Fee Coach* — a deterministic rules engine that cross-references the customer's ledger with the in-force policy (§6).
+
+### Verified
+
+- **66 tests** in `npm test` (all pass) + clean `npm run typecheck`.
+- **Reproducible reproduction of the critical bug**: `scripts/repro-double-debit.ts` (€1.00 → €3.00 before; exactly €1.00 after).
+- **Measured before/after eval** (§0c): BEFORE 1/14 pass · 0/14 cite → AFTER 16/16 pass · 14/14 of the required citations (r4, see §7.3); no invention in any answer.
+- **The starter's own seeded cases** (§0b) re-verified live after the fixes.
+- **Full functional walkthrough**: request → card → confirm (receipt with reference) → discard (recorded) → expire (re-request) → audit in the operator view and close the case.
+
+### Pending (declared)
+
+1. ~~`intentId` per form submission~~ - **closed** in §7.1: the form keeps its submission identity and the server reuses an identical pending proposal without a conversation (verified with simultaneous submits).
+2. ~~Section-based chunking and product prefix when embedding~~ - **closed** in §7.2 (section-aware chunking, 458 chunks, prefixed embedding input).
+3. ~~Historical retrieval~~ - **implemented** in §7.2: archived documents are retrieved for genuinely historical questions and labelled as no longer in force.
+4. **Delivery**: record the demo video (`submission/VIDEO-SCRIPT.md`), convert `submission/EXPLANATION.md` to PDF for the written explanation, then download the ZIP from the repository — GitHub already excludes `.env*`, `node_modules/`, `.next/` and `.data/` from the archive.
+5. ~~Minor findings~~ - **closed** in §7.1 (round-budget signal, non-JSON `bankRequest` guard, `/api/people` documented and locked by a test), with one new follow-up: `restoreIndex` imports the prefix helper from `ingestion/pipeline`, a safe ESM cycle that would be cleaner if the helper lived in `retrieval/embeddings.ts`.
