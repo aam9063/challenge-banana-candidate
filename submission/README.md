@@ -15,8 +15,9 @@
 | `ai-sessions/session-02-implementation-and-polish.md` | Session 2 (28-09-2026): Part 1 (four defect families and operator visibility), the Trust Layer, UX iterations driven by real user feedback, and the measured before/after evaluation (phases 0–11). |
 | `ai-sessions/session-03-pending-items-and-fee-coach.md` | Session 3 (29-09-2026): the deterministic fee coach, the environment hardening, the delivery documentation, and the closure of the declared pending items (phases 1–5). |
 | `evidence/eval-before-r2.json` | Raw evaluation results on the base commit (7 ground-truth questions × 2 repetitions). |
-| `evidence/eval-after-r2.json` | Raw evaluation results on the fixed branch, same protocol. |
+| `evidence/eval-after-r2.json`, `evidence/eval-after-r3.json`, `evidence/eval-after-r4.json` | Raw evaluation results on the fixed branch across the retrieval improvements. |
 | `evidence/eval-before.json`, `evidence/eval-after.json` | First evaluation round (4 questions, single repetition). |
+| `VIDEO-SCRIPT.md` | Timed recording script for the demo video, in Spanish and English. |
 
 ## Project files that carry the work
 

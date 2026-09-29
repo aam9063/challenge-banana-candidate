@@ -79,7 +79,7 @@ DOUBLE DEBIT CONFIRMED: one €1.00 intention debited €3.00.
 
 **Root cause**: `chunker.ts` only put `title/version/validFrom/validTo` on the offset-0 chunk (the rest `null` → no filtering possible and UI "Version —"); `search.ts` filtered only by audience → archived policies (`archive-*`, in force until 2026-08-31) competed with the policy in force at the reference date (2026-09-24).
 
-**Fix**: metadata propagated to all chunks (ids `sha256(docId:offset:text)` without metadata → embeddings cache intact, re-ingestion at no cost); inclusive currency filter with `null` = open; re-ingestion + export of the portable index (356 chunks).
+**Fix**: metadata propagated to all chunks (ids `sha256(docId:offset:text)` without metadata → embeddings cache intact, re-ingestion at no cost); inclusive validity filter with `null` = open; re-ingestion + export of the portable index (356 chunks).
 
 **Verification**: `npm test` 19/19 (2 new); live search "Aurora account fees" → only in-force v2 documents, zero `archive-*`; chunks with full metadata.
 

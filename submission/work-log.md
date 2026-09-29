@@ -15,6 +15,7 @@
 4. [Part 2: Trust Layer](#4-part-2--trust-layer-distinctive-feature)
 5. [Final state: done / verified / pending](#final-state-done--verified--pending)
 6. [Part 2 (extension): Fee Coach](#6-part-2-extension--fee-coach)
+7. [Closing the declared pending items](#7-closing-the-declared-pending-items)
 
 ---
 
@@ -27,7 +28,7 @@ The business clauses from `docs/contracts.md` and the corresponding defect in th
 | *"An operation intent represents a customer intention. Retrying that intent must not multiply its effects."* | New reference per attempt → money was moved **3 times** | `scripts/repro-double-debit.ts` (profile `lost-response`): a €1.00 intention → **€3.00** debited | `8056774`: `stableReference()` per intent + status gates + reconciliation | Repro printed: exact delta **−€1.00**, retry without side effects · 4 tests |
 | *"A transport error or timeout does not prove that the bank rejected the operation. Customer-facing status should match verified facts."* | A 504 was marked `failed` even though the bank may have committed | Same repro + profile `slow-response`/`lost-response`; `client.ts` turned every timeout into 504 without verifying | `8056774`: `reconcileOutcome()` (found→completed · 404→verified failed · query fails→non-terminal `processing` with reference) | 3 tests (recovered via reconciliation; unverifiable never `failed`) |
 | *"A sensitive operation must present its amount, source, and destination for explicit review before execution. An informational conversation alone does not authorize payment."* | `authorizeTransfer` always returned `null`: the approvals flow was dead code and the agent transferred straight from the chat | Seeded case **Elena** (`fixtures/conversations.json`): *"Before deciding whether to send EUR 25 to Hugo…"* → **"Transfer completed."** | `1b1099a`: explicit proposal (10 min) + atomic consumption + 409/410 checks; `fcd0405`: real cancellation; `221ecf7`: the agent must create the proposal with the tool; `b6b953e`: one proposal per conversation | 10 tests (proposal without debit, double confirm 409, expired 410, altered payload 409, supersede, reuse) + live E2E |
-| *"Assistant information should rely on applicable documentation and make its evidence traceable. Missing evidence should be acknowledged with a useful next step. Documents can contain historical versions."* | Prompt that invited making things up (`concrete estimate`, `references are not required`) + metadata only in the first chunk + no in-force filter | Seeded cases **Inés** (*"It is common to receive EUR 30 for a referral"*) and **Carla** (correct fee but **no citation**); corpus with `archive-aurora-*` (EUR 8) competing with the in-force document (EUR 6) | `38fc5ed`: metadata on every chunk + in-force filter (2026-09-24) + re-ingestion; `53d3333`: mandatory citations `[docId vN]`, estimating forbidden, no evidence → admit it + next step | 4 tests for currency/citation + live search without `archive-*` + live questions citing `[aurora-fees-2026 v2]` |
+| *"Assistant information should rely on applicable documentation and make its evidence traceable. Missing evidence should be acknowledged with a useful next step. Documents can contain historical versions."* | Prompt that invited making things up (`concrete estimate`, `references are not required`) + metadata only in the first chunk + no in-force filter | Seeded cases **Inés** (*"It is common to receive EUR 30 for a referral"*) and **Carla** (correct fee but **no citation**); corpus with `archive-aurora-*` (EUR 8) competing with the in-force document (EUR 6) | `38fc5ed`: metadata on every chunk + in-force filter (2026-09-24) + re-ingestion; `53d3333`: mandatory citations `[docId vN]`, estimating forbidden, no evidence → admit it + next step | 4 tests for validity/citation + live search without `archive-*` + live questions citing `[aurora-fees-2026 v2]` |
 | *"Operators need to understand the conversation, relevant steps, and effects. Historical evidence that was never recorded must not be invented."* | `caseDetail` with hardcoded `history/events/intents/bank`; `recordEvent` discarded args/outputs; cases could not be closed | Code + live verification: the operator view showed nothing of what had happened | `691c5b1`: full telemetry, populated case detail (incl. `GET /v1/operator/customer`), honest `gaps`, case closing; `c730b02`/`959c4c5`: confirmation receipt and cancellation record in the thread | 4 tests + E2E with a real case: 8 events with `arguments/output/durationMs`, operation with reference, closing and 409 on repeat |
 | *"Only an account holder may initiate a transfer from that account. Operators cannot transfer customer money."* | (No defect found) the ownership check existed and the role was validated | Review of `authorization.ts` / `tools.ts` | No change | Existing role tests |
 | *"Amounts are positive integer euro cents, without overdrafts. Maximum per operation: 10,000,000 cents."* | (No defect found) zod validation active | Review of `transferSchema` | No change | Existing tests |
@@ -209,13 +210,13 @@ The contract requires: *"Assistant information should rely on applicable documen
 
 ### Root cause (code reading)
 
-1. `src/ingestion/chunker.ts:13-16`: `title/version/validFrom/validTo` were only populated on the offset-0 chunk; the rest stayed `null` → the UI showed "Version —" and per-chunk currency filtering was impossible.
+1. `src/ingestion/chunker.ts:13-16`: `title/version/validFrom/validTo` were only populated on the offset-0 chunk; the rest stayed `null` → the UI showed "Version —" and per-chunk validity filtering was impossible.
 2. `src/retrieval/search.ts:18`: it only filtered by audience (`public`/operator). Archived and superseded documents competed in the ranking with the in-force policy → the assistant could answer with expired fees/rules.
 
 ### Fix (implemented)
 
 1. `chunker.ts`: document metadata propagated to **all** chunks. The chunk id is `sha256(docId:offset:text)` (without metadata) → stable ids, the embeddings cache keeps working (re-ingestion at no API cost).
-2. `search.ts`: currency filter on `referenceDate` with inclusive bounds and `null` = open (`validFrom <= ref && (validTo == null || validTo >= ref)`), on top of the audience filter. Uniform `YYYY-MM-DD` format across the corpus (verified) → exact lexicographic comparison.
+2. `search.ts`: validity filter on `referenceDate` with inclusive bounds and `null` = open (`validFrom <= ref && (validTo == null || validTo >= ref)`), on top of the audience filter. Uniform `YYYY-MM-DD` format across the corpus (verified) → exact lexicographic comparison.
 3. Re-ingestion + export of the portable index (356 chunks, all with full metadata).
 
 ### Verification (after) — CONFIRMED
@@ -231,11 +232,11 @@ aurora-conditions-2026  | v2 2026-09-01 -> None | 0.605
 aurora-fees-2026        | v2 2026-09-01 -> None | 0.576
 ```
 
-Zero `archive-*` results; all chunks with version and currency populated (`GET /api/documents/:id/chunks`).
+Zero `archive-*` results; all chunks with version and validity populated (`GET /api/documents/:id/chunks`).
 
 ### Design note
 
-The currency filter also applies to the operator role. The document library (`GET /api/documents`) still shows the WHOLE corpus including historical documents; only the *search that feeds answers* uses in-force documents exclusively. If operators were to search historical versions, that would be a separate product decision.
+The validity filter also applies to the operator role. The document library (`GET /api/documents`) still shows the WHOLE corpus including historical documents; only the *search that feeds answers* uses in-force documents exclusively. If operators were to search historical versions, that would be a separate product decision.
 
 ---
 
@@ -254,7 +255,7 @@ A trust layer on top of the assistant that covers two unmet contracts at once:
 
 ### Why it is distinctive
 
-- It is not a generic chatbot: **every answer is auditable** (citation → document → version → currency) and **every operation is reversible at a glance** (proposal → confirmation → receipt).
+- It is not a generic chatbot: **every answer is auditable** (citation → document → version → validity window) and **every operation is reversible at a glance** (proposal → confirmation → receipt).
 - It composes everything built before: in-force documents (Bug 2), exactly-once intents (Bug 1) and now explicit review — the demo chains all three.
 
 ### Implementation
@@ -310,16 +311,10 @@ Verified live: different payload → 1 pending and the superseded one answers 40
 
 **Method lesson**: do not pollute demo data with smoke tests — clean up the proposals after every verification.
 
-### Demo script for the video (suggested script)
+### Demo script
 
-1. **Verifiable citation**: "What is the monthly fee of the Aurora account and when is it waived?" → answer with chip `[aurora-fees-2026 v2]` → click → opens the document in the library. (Verified: the answer cites the exact conditions — €6/month, waived with salary ≥€1.200 + 3 purchases.)
-2. **No invention**: "Can I transfer 999 million euros?" → cites the documented limit instead of inventing one (`[aurora-operations-2026 v2]`).
-3. **Explicit confirmation**: "Send 1 euro from my Aurora account to Bruno, concept coffee" → the agent shows the proposal and clarifies it was NOT executed → "Proposals awaiting confirmation" panel → Confirm → receipt with reference.
-4. **Double-confirm blocked**: second click on Confirm → 409 "This proposal was already confirmed."
-5. **Exactly-once under failure**: with `npm run scenario -- lost-response`, repeat the flow → exactly €1 debited (`scripts/repro-double-debit.ts` prints "No double debit observed").
-6. **Closing**: balances consistent between UI and bank at all times.
+The recording script lives in `submission/VIDEO-SCRIPT.md` (a tight four-minute take, provided in Spanish and English with exact commands, prompts and expected outputs).
 
----
 
 ## 5. Bug 3 (remainder) + Bug 4: Operator visibility and telemetry
 
@@ -369,14 +364,14 @@ This fix closes the video's loop: the same case shows the confirmation proposal 
 
 ### Why it is distinctive
 
-A generic chatbot can *explain* the fee policy; this one **evaluates it against the customer's ledger**. And it composes everything built before: verified ledger (exactly-once and reconciliation), documents filtered by currency, traceable citations and explicit honesty about what cannot be known.
+A generic chatbot can *explain* the fee policy; this one **evaluates it against the customer's ledger**. And it composes everything built before: verified ledger (exactly-once and reconciliation), documents filtered by validity, traceable citations and explicit honesty about what cannot be known.
 
 ### How it decides (no LLM)
 
 `src/banking/feePolicy.ts`, a pure, side-effect-free function:
 
 1. **Account label → product** (`"Aurora account"` → `aurora`).
-2. **In-force document** from the index, with the same currency semantics as search (at reference date 2026-09-24); `archive-*` documents are **never** candidates.
+2. **In-force document** from the index, with the same validity semantics as search (at reference date 2026-09-24); `archive-*` documents are **never** candidates.
 3. **The fee is parsed from the document TEXT**, not from a hardcoded table: it covers `"The Aurora account monthly fee is EUR 6."` and `"The monthly fee for Horizon is EUR 3."`. If the text does not declare it → `undetermined`, never an invented figure.
 4. **The waiver rule also comes from the text**: only Aurora has one; the other documents explicitly deny it. Parsed thresholds: `EUR 1,200` and `three settled card purchases`. If it mentions a waiver that cannot be parsed → `undetermined`.
 5. **Conditions against the customer's movements of the month**: salary (positive with `salary`, ≥ threshold) and card purchases (negatives excluding transfers and the initial balance), with the real evidence cited.
@@ -413,30 +408,65 @@ Accuracy note: on a first pass the model attached the Aurora citation to the sav
 
 ---
 
+---
+
+## 7. Closing the declared pending items
+
+The submission's own limitation list flagged six pending items. All of them are now closed, each with its own verification, plus the evaluation seam they exposed.
+
+### 7.1 Manual form identity and agent-round signal
+
+- **The transfer form keeps its submission identity**: the same payload signature reuses the same `intentId`, and the no-conversation path reuses an identical pending proposal for the user, so a double click or a repeat submit cannot create two proposals. Verified live with two **simultaneous** submits: one approval, one pending proposal.
+- **Agent round-budget exhaustion** now records a `run.incomplete` telemetry event and the final answer states that the request could not be completed within the allowed steps and offers a retry or human support, instead of a silent generic fallback.
+- **`bankRequest`** parses the body defensively: a non-JSON 5xx raises `BankError` with the real status and a clean message rather than a raw `SyntaxError` surfacing as an unrelated 500.
+- **`GET /api/people`** stays public on purpose (the person selector is how a session is created) but is now an explicit, documented decision locked by a test.
+
+### 7.2 Retrieval quality
+
+- **Section-aware chunking**: documents split on level-2 headings with a 650-character sub-split bound; the corpus yields **458 chunks** (was 356) and the Aurora waiver conditions now travel in one clean section chunk.
+- **Embedding prefix**: chunks are embedded as `title · documentId · vN` plus the text while the stored and cited text stays clean, so the boilerplate shared by all 80 documents no longer dominates the vectors.
+- **Historical retrieval**: a deterministic classifier over the query (`before`, `previously`, `used to`, `no longer`, `old`, `historical`, `archive`, `last year`, an explicit past year...) enables archived documents on both the tool path and the first automatic retrieval pass. The default stays in-force-only.
+
+Live, all three verified: the published Aurora fee answers **EUR 6** with `[aurora-fees-2026 v2]`; "this month" answers **EUR 0** with both waiver conditions and their ledger evidence; the historical question answers **EUR 8** with `[archive-aurora-9 v1]` and states explicitly that it no longer applies.
+
+### 7.3 The evaluation seam this exposed (honest fix)
+
+Block 2 made the eval go from 14/14 to 12/14, and **the product was right while the criterion was wrong**. The ambiguous question "What is the monthly fee of my Aurora account?" now routes to the deterministic fee engine, which answers **EUR 0** because this customer meets both waiver conditions, exactly as the engine's own tests assert. The old criterion demanded the published EUR 6.
+
+Rather than loosening a criterion, the two intents were separated into two questions with strict criteria each: "What is the published monthly fee for the Aurora account?" (EUR 6, cited) and "Will I be charged a fee for my Aurora account this month?" (EUR 0 / waiver, cited).
+
+| Round | Turns | Passed | Cited |
+|---|---|---|---|
+| r2 (before block 2) | 14 | 14/14 | 12/14 (12/12 required) |
+| r3 (after block 2, old criteria) | 14 | 12/14 (criterion artefact) | 13/14 |
+| **r4 (split criteria)** | **16** | **16/16** | **14/16 (14/14 required)** |
+
+A latent seam found while closing this: `restoreIndex()` seeded the shipped embedding cache under the raw chunk text while the restored vector came from the prefixed input, so a query string equal to a chunk's clean text could have hit a wrongly keyed vector. It is now keyed consistently with the ingest path, the shipped index was re-exported, and a test locks it.
+
 ## Final state: done / verified / pending
 
 ### Done
 
 **Part 1 (launch readiness)** — 4 defect families fixed, each mapped to its clause in §0:
 1. Multiple debit on retries → exactly-once with a stable reference, intent gates and reconciliation of unknown outcomes.
-2. Stale documentation feeding answers → per-chunk metadata + currency filter at the reference date + re-ingestion of the index.
+2. Stale documentation feeding answers → per-chunk metadata + validity filter at the reference date + re-ingestion of the index.
 3. Missing explicit confirmation → proposals with expiry, atomic consumption, real cancellation (Discard), reuse/supersede and outcome recorded in the conversation.
 4. Blind operator → full telemetry, case detail with conversation/activity/bank operations, honest "gaps" and case closing.
 
-**Part 2 (distinctive feature)** — *Trust Layer*: inline confirmation in the chat with countdown and re-request + answers with verifiable citations (document, version, currency) and no-evidence behavior. **Extension**: *Fee Coach* — a deterministic rules engine that cross-references the customer's ledger with the in-force policy (§6).
+**Part 2 (distinctive feature)** — *Trust Layer*: inline confirmation in the chat with countdown and re-request + answers with verifiable citations (document, version, validity window) and no-evidence behavior. **Extension**: *Fee Coach* — a deterministic rules engine that cross-references the customer's ledger with the in-force policy (§6).
 
 ### Verified
 
-- **52 tests** in `npm test` (all pass) + clean `npm run typecheck`.
+- **66 tests** in `npm test` (all pass) + clean `npm run typecheck`.
 - **Reproducible reproduction of the critical bug**: `scripts/repro-double-debit.ts` (€1.00 → €3.00 before; exactly €1.00 after).
-- **Measured before/after eval** (§0c): BEFORE 1/14 pass · 0/14 cite → AFTER 14/14 pass · 12/12 of the required citations; 28 answers with no invented figure.
+- **Measured before/after eval** (§0c): BEFORE 1/14 pass · 0/14 cite → AFTER 16/16 pass · 14/14 of the required citations (r4, see §7.3); no invention in any answer.
 - **The starter's own seeded cases** (§0b) re-verified live after the fixes.
 - **Full functional walkthrough**: request → card → confirm (receipt with reference) → discard (recorded) → expire (re-request) → audit in the operator view and close the case.
 
 ### Pending (declared)
 
-1. **`intentId` per form submission**: today the endpoint generates a random one per submit; the proposal flow + one-proposal-per-conversation mitigates it (no automatic double debit), but a double click without confirming can leave two proposals if there is no open conversation.
-2. **Section-based chunking and product prefix when embedding**: it would improve retrieval precision (the boilerplate shared by the 80 documents dominates the embeddings). Not addressed; the currency filter and the citations already prevent the material error.
-3. **Historical retrieval**: archived documents are not retrieved for genuinely historical questions (limit declared in §0c).
-4. **Delivery**: record the video (script in §4), merge the branch chain to `dev` and package the ZIP (without `.env*`, `node_modules/`, `.next/`, `.git/`, `.data/`).
-5. **Unaddressed minor findings** (documented, not fixed): the agent loop runs out of signal when it exhausts its 7 rounds; `bankRequest` may throw if a 5xx carries no JSON; `/api/people` does not require a session.
+1. ~~`intentId` per form submission~~ - **closed** in §7.1: the form keeps its submission identity and the server reuses an identical pending proposal without a conversation (verified with simultaneous submits).
+2. ~~Section-based chunking and product prefix when embedding~~ - **closed** in §7.2 (section-aware chunking, 458 chunks, prefixed embedding input).
+3. ~~Historical retrieval~~ - **implemented** in §7.2: archived documents are retrieved for genuinely historical questions and labelled as no longer in force.
+4. **Delivery**: record the demo video (`submission/VIDEO-SCRIPT.md`), convert `submission/EXPLANATION.md` to PDF for the written explanation, then download the ZIP from the repository — GitHub already excludes `.env*`, `node_modules/`, `.next/` and `.data/` from the archive.
+5. ~~Minor findings~~ - **closed** in §7.1 (round-budget signal, non-JSON `bankRequest` guard, `/api/people` documented and locked by a test), with one new follow-up: `restoreIndex` imports the prefix helper from `ingestion/pipeline`, a safe ESM cycle that would be cleaner if the helper lived in `retrieval/embeddings.ts`.

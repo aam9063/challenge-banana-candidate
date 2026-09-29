@@ -41,7 +41,7 @@ npm run dev       # http://127.0.0.1:3000  (bank API on 4001)
 
 **Configuration note.** `src/config.ts` loads `.env.local` before `.env`, and dotenv never overwrites a variable that is already set. An *empty* `OPENAI_API_KEY=` in `.env.local` therefore shadows a real key coming from `.env` or the environment. `npm run setup` now writes that line commented out, and `README.md` documents the rule. (This exact trap cost us the first hour of onboarding; fixing it in code is part of the delivery.)
 
-Everything else: `npm test` (52 tests), `npm run typecheck`, `npm run reset` (services stopped), `npm run scenario -- <profile>` to drive the bank's failure profiles.
+Everything else: `npm test` (66 tests), `npm run typecheck`, `npm run reset` (services stopped), `npm run scenario -- <profile>` to drive the bank's failure profiles.
 
 ---
 
@@ -190,7 +190,7 @@ The second answer is as important as the first: **no invented figure, and no cit
 
 - **Ordered workflow, tracked per feature.** Each change started with a feature document (scope, tasks, decisions, evidence) under `odd/tasks/`, and closed with a work-unit commit containing code, tests and documentation together.
 - **Reproduction before repair.** The critical defect was reproduced with a deterministic script against a documented bank profile before touching code; the same script prints the after state.
-- **Test-first where it mattered.** The idempotency fix, the approval flow, the citation contract and cancelled-proposal semantics were written as failing tests first (red → green), and 52 tests now run in `npm test`.
+- **Test-first where it mattered.** The idempotency fix, the approval flow, the citation contract and cancelled-proposal semantics were written as failing tests first (red → green), and 66 tests now run in `npm test`.
 - **Measured, not asserted.** A small evaluation (`scripts/eval-answers.ts`) asks seven ground-truth questions — with a forbidden trap value each — against the base commit and against the fixed branch, scoring fact correctness, absence of the trap and presence of a citation. Raw results are in `submission/evidence/`.
 - **Delegation with review.** Implementation work was delegated with closed specifications and narrow edit surfaces; every result was reviewed by reading the diff and re-running the checks, and two defects found in that review were fixed (a misattributed citation; a prompt that let the agent skip the tool).
 - **Honesty over polish.** Limitations are stated below rather than hidden, including the fact that the measured improvement is *traceability*, not factual accuracy.
@@ -208,16 +208,16 @@ The second answer is as important as the first: **no invented figure, and no cit
 | Only in-force documents answer | `POST /api/search {"query":"Aurora account fees"}` → no `archive-*` results; `GET /api/documents/:id/chunks` shows version and validity on every chunk |
 | No invented data | Ask about referral rewards → acknowledged gap plus next step, no amount |
 | Operators get real evidence | Sign in as an operator, open a case → conversation, agent activity with payloads, bank operations, gaps, close action |
-| Answers are grounded (measured) | `LABEL=after-r2 REPEATS=2 node --import tsx scripts/eval-answers.ts`, compare with `submission/evidence/eval-before-r2.json` |
+| Answers are grounded (measured) | `LABEL=after-r4 REPEATS=2 node --import tsx scripts/eval-answers.ts` (16 turns), compare with `submission/evidence/eval-before-r2.json` and `eval-after-r4.json` |
 | Fee Coach decides in code | Ask "Will I be charged a fee for my Aurora account this month?", then read `src/banking/feePolicy.ts` |
 
 ### Measurement detail (and its honest reading)
 
 | | BEFORE (base commit) | AFTER |
 |---|---|---|
-| Questions passed | 1/14 | 14/14 |
-| Answers carrying a citation | 0/14 | 12/14 (12/12 of those requiring one) |
-| Invented figures across 28 answers | 0 | 0 |
+| Questions passed | 1/14 | 16/16 |
+| Answers carrying a citation | 0/14 | 14/16 (14/14 of those requiring one) |
+| Invented figures across the answers | 0 | 0 |
 
 **The measured delta is traceability, not factuality**: the base agent answered all seven facts correctly in fresh conversations, so the honest claim is *grounding with version-tagged citations*. The instrument also has a declared bias: it scores by presence/absence of amounts, so a comparative answer ("Horizon is EUR 3, unlike Aurora's EUR 6") could register a false negative — a bias **against** this measurement, and it did not occur in the 28 answers. One BEFORE failure is a scorer artifact ("couldn't verify a referral reward" not matched by the phrase list).
 
@@ -227,9 +227,9 @@ The second answer is as important as the first: **no invented figure, and no cit
 
 Stated deliberately, in the order they would matter:
 
-1. **Historical retrieval.** Archived documents are excluded from answer retrieval (they remain browsable in the library). A genuinely historical question therefore gets an honest "no applicable documentation" plus a next step and a pointer to the current notice — verified live — rather than the archived figure.
+1. **Historical retrieval — now implemented.** A deterministic classifier over the query enables archived documents, which are then labelled as historical and no longer in force (verified live: the pre-September Aurora fee answers EUR 8 with `[archive-aurora-9 v1]` and says it no longer applies). The default remains in-force-only.
 2. **Transfer form and intent identity.** The manual form does not send its own `intentId` per submission; the proposal step plus one-proposal-per-conversation mitigates this (no automatic double debit), but a double click without an open conversation can leave two proposals.
-3. **Retrieval quality.** Chunking is still fixed-size (650 characters) and documents share a long boilerplate that dominates embeddings; section-based chunking and embedding the product/title as a prefix would improve precision. The validity filter and citations already prevent the material error.
+3. **Retrieval quality — improved.** Chunking is now section-aware and chunks are embedded with a `title · documentId · version` prefix while the stored text stays clean, which addresses the boilerplate-dominance problem.
 4. **Fee parsing brittleness.** The parser tolerates the current corpus, not any future phrasing: a reworded policy falls back to *undetermined* (safe, and pinned by a test) instead of mis-reading a figure.
 5. **Month source.** The fee evaluation month derives from the exercise reference date, not the wall clock; a real deployment must change the source of "now".
 6. **Minor, not addressed**: the agent loop gives no signal when it exhausts its 7 tool rounds; `bankRequest` can throw on a non-JSON 5xx body; `/api/people` does not require a session; telemetry caps (50 messages / 100 events) are not flagged in the operator view.
