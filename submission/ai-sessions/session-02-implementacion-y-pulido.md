@@ -214,6 +214,16 @@ DOUBLE DEBIT CONFIRMED: one €1.00 intention debited €3.00.
 
 **Límites declarados**: parseo tolerante al corpus actual (ante reformulaciones cae en `undetermined`, con test que lo fija), mes evaluado derivado de la fecha de referencia y ventana de 100 movimientos de `/v1/movements`.
 
+## Fase 13 — Endurecimiento de la configuración de entorno
+
+**Contexto**: el fallo que bloqueó el proyecto el primer día (el `OPENAI_API_KEY=` **vacío** que `setup.ts` escribía en `.env.local`, que tapaba la key real de `.env` porque `config.ts` carga `.env.local` primero y dotenv no pisa variables ya definidas) se había diagnosticado y resuelto en la máquina, pero **no estaba corregido en el código**. Cualquier persona que clonara la entrega y configurara la key por la vía natural (`.env` o variable de entorno) habría chocado con el mismo error confuso en su primer `npm run doctor`.
+
+**Trabajo** (rama `fix/env-precedence`, desde `dev`): `scripts/setup.ts` ahora escribe `.env.local` a partir del ejemplo con la línea `OPENAI_API_KEY` **comentada**, de modo que la key puede venir de `.env.local`, de `.env` o del entorno sin que un valor vacío la tape; y `README.md` documenta la regla de precedencia y la trampa.
+
+**Verificación**: se borró `.env.local`, se ejecutó `npm run setup` y se comprobó que el archivo generado contiene `# OPENAI_API_KEY=`; el `.env.local` original se restauró **byte-idéntico** (verificado con `diff`). `npm run typecheck` y `npm test` (44/44 en esa rama) en verde.
+
+**Nota de método**: se eligió una rama propia desde `dev` en vez de colarlo en la rama del fee coach, para no mezclar un arreglo de entorno con una feature de producto.
+
 ## Decisiones transversales y su porqué
 
 | Decisión | Porqué |
