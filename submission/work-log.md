@@ -1,8 +1,8 @@
 # Banana Bank — Work Log (video material)
 
-> Registro cronológico y verificable de todo el trabajo de la Parte 1 y Parte 2.
-> Cada entrada es material directo para el video explicativo: problema → evidencia → causa raíz → arreglo → verificación.
-> Las sesiones de IA completas están en `submission/ai-sessions/`.
+> **Qué es este archivo**: el registro cronológico de ingeniería del proyecto. Cada unidad de trabajo queda como *problema → causa raíz (archivo) → reproducción → arreglo (commit) → verificación con números*, más las decisiones y los límites declarados.
+> **Para qué sirve**: (1) evidencia para la evaluación — cada afirmación tiene su reproducción; (2) material de video — el guion de grabación está en `submission/VIDEO-SCRIPT.md`.
+> **Documentos relacionados**: `submission/EXPLANATION.md` (explicación de entrega), `submission/README.md` (inventario), `submission/ai-sessions/` (sesiones de IA originales), `submission/evidence/` (resultados crudos de la medición).
 
 ## Índice
 

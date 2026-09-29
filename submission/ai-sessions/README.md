@@ -9,4 +9,5 @@
 | Archivo | Tema | Estado |
 |---|---|---|
 | `session-01-setup-y-diagnostico.md` | Diagnóstico del fallo de instalación, análisis del challenge y mapeo del código | Cerrada |
-| `session-02-implementacion-y-pulido.md` | Implementación completa: Parte 1 (4 bugs + visibilidad de operador), Parte 2 (Trust Layer + Coach de comisiones), pulido UX, medición antes/después y endurecimiento de entorno (fases 0–13) | Al día |
+| `session-02-implementacion-y-pulido.md` | 28-09-2026 — Parte 1 (4 bugs + visibilidad de operador), Parte 2 (Trust Layer), pulido UX y medición antes/después (fases 0–11) | Cerrada |
+| `session-03-pendientes-y-fee-coach.md` | 29-09-2026 — Coach de comisiones, endurecimiento de entorno, documentación de entrega y cierre de pendientes declarados | En curso (se actualiza) |
