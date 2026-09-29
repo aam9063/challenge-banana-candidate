@@ -17,7 +17,6 @@
 | `evidence/eval-before-r2.json` | Raw evaluation results on the base commit (7 ground-truth questions × 2 repetitions). |
 | `evidence/eval-after-r2.json`, `evidence/eval-after-r3.json`, `evidence/eval-after-r4.json` | Raw evaluation results on the fixed branch across the retrieval improvements. |
 | `evidence/eval-before.json`, `evidence/eval-after.json` | First evaluation round (4 questions, single repetition). |
-| `VIDEO-SCRIPT.md` | Timed recording script for the demo video, in Spanish and English. |
 
 ## Project files that carry the work
 
