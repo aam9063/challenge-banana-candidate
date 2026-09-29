@@ -34,7 +34,16 @@ export async function bankRequest<T>(
   } catch {
     throw new BankError(504, 'No response received from the bank.');
   }
-  const data = await response.json();
+  // Parse defensively: a 5xx may return an HTML/text error page, and a raw
+  // SyntaxError from JSON.parse would surface as an unrelated 500. An empty
+  // body is treated as an empty JSON object.
+  const text = await response.text();
+  let data: { error?: string };
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    throw new BankError(response.status, 'The bank returned a non-JSON response.');
+  }
   if (!response.ok) throw new BankError(response.status, data.error || 'Bank service error.');
   return data as T;
 }

@@ -2,8 +2,18 @@
  * Answer-quality eval for Banana Bank.
  *
  * Logs in as customer `lucia`, opens a FRESH conversation per question, asks
- * seven ground-truth questions and scores each answer against criteria:
+ * eight ground-truth questions and scores each answer against criteria:
  * fact correct, forbidden fact absent, citation token present.
+ *
+ * The former single Aurora fee question was split into two questions with
+ * separate intents, because the published product fee and the fee actually
+ * decided for this customer can legitimately differ (the deterministic
+ * fee_status engine may waive the published fee for this customer):
+ * - "What is the published monthly fee for the Aurora account?" checks the
+ *   published policy figure (EUR 6) from documentation.
+ * - "Will I be charged a fee for my Aurora account this month?" checks the
+ *   deterministic fee engine outcome for this customer (EUR 0: both waiver
+ *   conditions met). Neither criterion was loosened.
  *
  * Usage:
  *   APP_URL=http://127.0.0.1:3000 LABEL=after REPEATS=2 OUT=submission/evidence/eval-after.json \
@@ -43,11 +53,36 @@ interface Question {
 
 const QUESTIONS: Question[] = [
   {
-    question: 'What is the monthly fee of my Aurora account?',
+    // Published-policy intent: the product's fee as documented, answerable
+    // from the in-force fee document (and only from it — the ledger cannot
+    // answer a published-policy question).
+    question: 'What is the published monthly fee for the Aurora account?',
     fact: (a) => currencyAmount(6).test(a),
     forbidden: (a) => currencyAmount(8).test(a),
-    factHint: 'states EUR 6 as the Aurora monthly fee',
+    factHint: 'states EUR 6 as the published Aurora monthly fee',
     forbiddenHint: 'does NOT state EUR 8',
+    requireCitation: true,
+  },
+  {
+    // This-month intent: the deterministic fee engine decides what THIS
+    // customer is charged this month (both waiver conditions met -> EUR 0).
+    question: 'Will I be charged a fee for my Aurora account this month?',
+    fact: (a) => currencyAmount(0).test(a) || /waiv(?:er|ed)/i.test(a),
+    // Stating that this customer will be charged EUR 6 this month is the
+    // forbidden outcome. A sentence that merely mentions the published fee
+    // as context ("normally EUR 6, waived") must not fail the criterion, so
+    // the check is sentence-scoped and exempts waiver/published framings.
+    forbidden: (a) =>
+      a
+        .split(/(?<=[.!?])\s+/)
+        .some(
+          (s) =>
+            currencyAmount(6).test(s) &&
+            /charg|you (?:will )?pay|fee (?:is|of|applies)|amount (?:is|due)/i.test(s) &&
+            !/waiv|no fee|not (?:be )?charg|published|normally|instead/i.test(s),
+        ),
+    factHint: 'states EUR 0 / that the waiver applies for this month',
+    forbiddenHint: 'does NOT state that this customer will be charged EUR 6',
     requireCitation: true,
   },
   {

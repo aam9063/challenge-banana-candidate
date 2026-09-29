@@ -16,14 +16,6 @@ type ApprovalRow = {
 
 const APPROVAL_TTL_MS = 10 * 60 * 1000;
 
-function pendingApprovalFor(db: ReturnType<typeof appDb>, intentId: string, userId: string) {
-  return db
-    .prepare(
-      'SELECT * FROM approvals WHERE intent_id=? AND user_id=? AND consumed_at IS NULL AND cancelled_at IS NULL AND expires_at>?',
-    )
-    .get(intentId, userId, new Date().toISOString()) as ApprovalRow | undefined;
-}
-
 export async function authorizeTransfer(
   ctx: ToolContext,
   input: TransferInput,
@@ -80,16 +72,30 @@ export async function authorizeTransfer(
         ctx.conversationId,
       );
     } else {
-      // No conversation (e.g. the manual transfer form without an open chat):
-      // today's intent-scoped behaviour is kept. Limitation: without a
-      // conversation there is no scope to supersede, so proposals created
-      // here can pile up and are only cleaned up by expiry.
-      const existing = pendingApprovalFor(db, ctx.intentId, ctx.userId);
-      if (existing)
+      // No conversation (e.g. the manual transfer form): reuse an identical
+      // pending proposal for this user regardless of intent, so a double
+      // click or a repeat submit does not create a second user-visible
+      // proposal. A different payload creates a new one. Limitation: without
+      // a conversation there is no scope to supersede, so pending proposals
+      // with different payloads can still pile up and are only cleaned up by
+      // expiry.
+      const identical = db
+        .prepare(
+          `SELECT a.* FROM approvals a JOIN intents i ON i.id=a.intent_id
+           WHERE a.user_id=? AND i.conversation_id IS NULL
+             AND a.consumed_at IS NULL AND a.cancelled_at IS NULL
+             AND a.expires_at>? AND a.payload=?`,
+        )
+        .get(
+          ctx.userId,
+          new Date().toISOString(),
+          JSON.stringify(input),
+        ) as ApprovalRow | undefined;
+      if (identical)
         return {
           status: 'requires_confirmation',
-          approvalId: existing.id,
-          expiresAt: existing.expires_at,
+          approvalId: identical.id,
+          expiresAt: identical.expires_at,
           proposal: input,
         };
     }

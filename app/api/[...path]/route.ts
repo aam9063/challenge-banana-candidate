@@ -128,6 +128,10 @@ async function handler(request: Request, context: RouteContext) {
         embeddingModel: config.embeddingModel,
         keyConfigured: !!process.env.OPENAI_API_KEY,
       });
+    // Intentionally public: the person selector must work before any session
+    // exists, because choosing a person here IS how a session is created.
+    // This is a local simulator convenience, not authentication — every other
+    // route resolves the actor from the signed session cookie below.
     if (route === 'people') return json(people);
     if (route === 'session' && request.method === 'POST') {
       const { userId } = z.object({ userId: z.string() }).parse(await request.json());
