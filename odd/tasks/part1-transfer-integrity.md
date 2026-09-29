@@ -1,26 +1,26 @@
-# Feature: Part 1 — Transfer integrity (doble débito, intents y reconciliación)
+# Feature: Part 1 — Transfer integrity (double debit, intents and reconciliation)
 
-Branch base: `dev` (convención del proyecto: features salen de dev, todo pasa por dev antes de master).
+Base branch: `dev` (project convention: features branch off dev, everything goes through dev before master).
 
-## Objetivo
+## Goal
 
-Garantizar que una intención de transferencia produce **exactamente un** débito, y que el estado que ve el cliente refleja solo hechos verificados del banco.
+Guarantee that one transfer intention produces **exactly one** debit, and that the status the customer sees reflects only verified facts from the bank.
 
-## Tareas
+## Tasks
 
-- [x] 1. Reproducir el doble débito con perfil `lost-response` (evidencia before/after guardada en `submission/work-log.md` y script `scripts/repro-double-debit.ts`). CONFIRMADO: €1.00 → €3.00 (triple débito).
-- [x] 2. Fix: reference estable por intent en `dispatch.ts` (`stableReference()` — no regenerar en reintentos; no sobrescribir `intents.bank_reference`).
-- [x] 3. Fix: no re-despachar intents con estado `completed`/`processing` en `actions.ts` (gates por estado del intent).
-- [x] 4. Fix: reconciliación del resultado desconocido tras 5xx vía `GET /v1/operations/:reference` (`reconcileOutcome()`: found→completed, 404→failed verificado, lookup falla→processing no terminal).
-- [x] 5. Test de regresión automatizado (4 tests con banco fake in-process, TDD RED→GREEN, `npm test` 17/17).
-- [x] 6. Work-unit commits en rama `fix/transfer-idempotency` sobre `dev`: `404847c` (chore) + `8056774` (fix).
+- [x] 1. Reproduce the double debit with the `lost-response` profile (before/after evidence recorded in `submission/work-log.md` and script `scripts/repro-double-debit.ts`). CONFIRMED: €1.00 → €3.00 (triple debit).
+- [x] 2. Fix: one stable reference per intent in `dispatch.ts` (`stableReference()` — never regenerate on retries; never overwrite `intents.bank_reference`).
+- [x] 3. Fix: do not re-dispatch intents in `completed`/`processing` state in `actions.ts` (intent-status gates).
+- [x] 4. Fix: reconcile the unknown outcome after a 5xx via `GET /v1/operations/:reference` (`reconcileOutcome()`: found → completed, 404 → verified failed, lookup failure → non-terminal processing).
+- [x] 5. Automated regression test (4 tests with an in-process fake bank, TDD RED→GREEN, `npm test` 17/17).
+- [x] 6. Work-unit commits on branch `fix/transfer-idempotency` over `dev`: `404847c` (chore) + `8056774` (fix).
 
-## Evidencia
+## Evidence
 
-- Repro before: una intención de €1,00 (acc-lucia → acc-bruno) debitó €3,00. App reportó `completed` en ambos intentos mientras el saldo real caía €2,00 y luego €1,00 más. Ver `submission/work-log.md` §2.
-- Commits: `404847c` (chore: scaffolding + repro), fix en curso en rama `fix/transfer-idempotency`.
+- Repro before: a €1.00 intention (acc-lucia → acc-bruno) debited €3.00. The app reported `completed` on both attempts while the real balance dropped €2.00 and then another €1.00. See `submission/work-log.md` §2.
+- Commits: `404847c` (chore: scaffolding + repro), fix on branch `fix/transfer-idempotency`.
 
-## Notas
+## Notes
 
-- El escenario `intermittent` (seed 17) es el perfil por defecto tras `reset`; para el repro determinista se usa `lost-response`.
-- Los endpoints admin del simulador (`/admin/*`) NO pueden usarse desde la app para completar operaciones (contrato). Solo para configurar escenarios de test.
+- The `intermittent` scenario (seed 17) is the default profile after `reset`; the deterministic reproduction uses `lost-response`.
+- The simulator's admin endpoints (`/admin/*`) must NOT be used from the application to complete operations (contract). They are only for configuring test scenarios.

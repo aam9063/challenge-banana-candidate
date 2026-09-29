@@ -1,22 +1,22 @@
-# Feature: Part 1 — Applicable-document retrieval (docs caducados)
+# Feature: Part 1 — Applicable-document retrieval (stale documents)
 
-Branch: `fix/stale-doc-retrieval` (apilada sobre `fix/transfer-idempotency` por archivos compartidos de submission; independencia funcional total).
+Branch: `fix/stale-doc-retrieval` (stacked on `fix/transfer-idempotency` because of shared submission files; the functional work is fully independent).
 
-## Objetivo
+## Goal
 
-Que el asistente solo recupere documentación **vigente a la fecha de referencia** (2026-09-24), con metadatos de versión trazables en cada chunk, cumpliendo el contrato: *"Assistant information should rely on applicable documentation and make its evidence traceable"* y *"Documents can contain historical versions"*.
+Make the assistant retrieve only documentation **in force at the reference date** (2026-09-24), with traceable version metadata on every chunk, satisfying the contract: *"Assistant information should rely on applicable documentation and make its evidence traceable"* and *"Documents can contain historical versions"*.
 
-## Tareas
+## Tasks
 
-- [x] 1. `chunker.ts`: propagar `title/version/validFrom/validTo` del documento a TODOS los chunks (hoy solo offset 0; el resto queda null → UI "Version —", filtrado imposible).
-- [x] 2. `search.ts`: filtrar chunks por vigencia en `config.referenceDate` (validFrom <= ref && (validTo == null || validTo >= ref)), manteniendo el filtro de audiencia.
-- [x] 3. Re-ingesta: `npm run ingest` + `npm run ingest -- --export` (embeddings cacheados → sin coste de API; actualiza índice portable de fixtures).
-- [x] 4. Tests de regresión: metadatos en todos los chunks; búsqueda excluye documentos caducados.
-- [x] 5. Verificación: typecheck + tests + búsqueda en vivo sin resultados caducados.
-- [ ] 6. Work-unit commit + documentación en `submission/work-log.md` §3.
+- [x] 1. `chunker.ts`: propagate the document's `title/version/validFrom/validTo` onto ALL chunks (previously only offset 0; the rest stayed null → UI showed "Version —" and filtering was impossible).
+- [x] 2. `search.ts`: filter chunks by validity at `config.referenceDate` (`validFrom <= ref && (validTo == null || validTo >= ref)`), keeping the audience filter.
+- [x] 3. Re-ingestion: `npm run ingest` + `npm run ingest -- --export` (cached embeddings → no API cost; updates the portable fixtures index).
+- [x] 4. Regression tests: metadata on every chunk; search excludes stale documents.
+- [x] 5. Verification: typecheck + tests + live search with no stale results.
+- [x] 6. Work-unit commit + documentation in `submission/work-log.md` §3.
 
-## Notas
+## Notes
 
-- El id de chunk es `sha256(docId:offset:text)` — no incluye metadatos → ids estables, el cache de embeddings sigue funcionando.
-- `config.referenceDate = '2026-09-24'` (config.ts:18). Confirmar formato de fechas en `fixtures/documents/manifest.json`.
-- Verificar formato real de `validFrom/validTo` (¿solo fecha o ISO datetime?) antes de comparar strings.
+- The chunk id is `sha256(docId:offset:text)` — it does not include metadata → ids stay stable and the embedding cache keeps working.
+- `config.referenceDate = '2026-09-24'` (config.ts:18). Confirm the date format in `fixtures/documents/manifest.json`.
+- Verify the real format of `validFrom/validTo` (date only or ISO datetime?) before comparing strings.

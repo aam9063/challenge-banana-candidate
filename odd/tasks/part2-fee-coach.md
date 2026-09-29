@@ -1,51 +1,51 @@
-# Feature: Part 2 (extensión) — Coach de comisiones (Fee coach)
+# Feature: Part 2 (extension) — Fee Coach
 
-Branch: `feature/fee-coach` (desde `dev`).
+Branch: `feature/fee-coach` (from `dev`).
 
-## Objetivo
+## Goal
 
-Responder *"¿me van a cobrar comisión este mes?"* cruzando **los movimientos reales del cliente** con la **política vigente del producto**, con **reglas deterministas en código** (el LLM no calcula: solo presenta). Cada afirmación sale con la cita del documento y la versión; lo que no se puede verificar se declara.
+Answer *"will I be charged a fee this month?"* by crossing **the customer's real movements** with the **in-force product policy**, using **deterministic rules in code** (the LLM does not compute: it only presents). Every statement carries the document citation and version; whatever cannot be verified is declared.
 
-## Por qué es distintiva
+## Why it is distinctive
 
-- Un chatbot genérico puede *explicar* la política; este **la evalúa contra el ledger del cliente**.
-- La decisión la toma código puro y testeable, no el modelo: demostrable leyendo `src/banking/feePolicy.ts`.
-- Compone toda la Parte 1: ledger verificado (exactly-once/reconciliación), documentos vigentes por fecha (no archivados), citas trazables y honestidad sobre lo que no se sabe.
+- A generic chatbot can *explain* the policy; this one **evaluates it against the customer's ledger**.
+- The decision is made by pure, testable code rather than by the model: demonstrable by reading `src/banking/feePolicy.ts`.
+- It composes all of Part 1: a verified ledger (exactly-once/reconciliation), documents in force by date (not archived ones), traceable citations and honesty about what is not known.
 
-## Contrato de datos verificado (no asumido)
+## Verified data contract (not assumed)
 
-| Dato | Realidad en el simulador |
+| Data | Reality in the simulator |
 |---|---|
-Cuentas | `GET /v1/accounts` → `label` ('Aurora account', 'Personal savings', …) → mapeable a producto |
-Movimientos | `GET /v1/movements` → `amountCents`, `description`, `createdAt` — **sin campo de tipo ni de liquidación** |
-Nómina sembrada | `'September salary'` **+175.000 c** (€1.750) |
-Compras | 4 débitos (~€10–20) `Groceries`, `Internet bill`, `Coffee shop`, `Transport` |
-Comisión por producto | Aurora 6 · Horizon 3 · Cloud 0 · Community 2 · Family 5 (`{producto}-fees-2026`, v2) |
-Exención | Solo Aurora (`waived` + `salary` + 3 compras con tarjeta en el mismo mes) |
-Archivados | `archive-aurora-*` = EUR 8 → **trampa**: nunca debe usarse para el mes actual |
+Accounts | `GET /v1/accounts` → `label` ('Aurora account', 'Personal savings', …) → mappable to a product |
+Movements | `GET /v1/movements` → `amountCents`, `description`, `createdAt` — **no type field and no settlement field** |
+Seeded salary | `'September salary'` **+175,000 c** (€1,750) |
+Purchases | 4 debits (~€10–20) `Groceries`, `Internet bill`, `Coffee shop`, `Transport` |
+Fee per product | Aurora 6 · Horizon 3 · Cloud 0 · Community 2 · Family 5 (`{product}-fees-2026`, v2) |
+Waiver | Aurora only (`waived` + `salary` + 3 card purchases in the same month) |
+Archived documents | `archive-aurora-*` = EUR 8 → **trap**: must never be used for the current month |
 
-## Tareas
+## Tasks
 
-- [x] 1. `src/banking/feePolicy.ts`: motor puro. Lee el documento **vigente** del producto desde el índice, extrae la comisión y la regla de exención **del texto del documento** (no de una tabla hardcodeada); evalúa las condiciones contra los movimientos del mes; devuelve resultado estructurado + `caveats`.
-- [x] 2. Tool `fee_status` en `src/agent/tools.ts` (cuentas + movimientos del cliente desde la API del banco) devolviendo el resultado estructurado.
-- [x] 3. Guía en `src/agent/prompt.ts`: ante preguntas de comisiones, usar la tool y presentar hechos + condiciones + cita; nunca calcular ni estimar por su cuenta; declarar los caveats.
-- [x] 4. Tests (puros, sin servicios): parseo de comisión y detección de exención sobre los 5 documentos reales; evaluación de condiciones con ledgers sintéticos (con/sin nómina, 0/1/2/3/4 compras); producto sin política (ahorros) → indeterminado; el archivado nunca se selecciona; tool-level con banco fake.
-- [x] 5. Verificación en vivo con el modelo real (Lucía Aurora + otro producto) y línea de demo para el video.
-- [ ] 6. Commit de work-unit + `work-log.md` §6 + `session-02` Fase 12.
+- [x] 1. `src/banking/feePolicy.ts`: pure engine. Reads the product's **in-force** document from the index, extracts the fee and the waiver rule **from the document text** (not from a hardcoded table); evaluates the conditions against the month's movements; returns a structured result plus `caveats`.
+- [x] 2. `fee_status` tool in `src/agent/tools.ts` (customer accounts + movements from the bank API) returning the structured result.
+- [x] 3. Guidance in `src/agent/prompt.ts`: for fee questions use the tool and present facts + conditions + citation; never compute or estimate on its own; state the caveats.
+- [x] 4. Tests (pure, no services): fee parsing and waiver detection over the 5 real documents; condition evaluation with synthetic ledgers (with/without salary, 0/1/2/3/4 purchases); product with no policy (savings) → undetermined; the archived document is never selected; tool-level against the fake bank.
+- [x] 5. Live verification with the real model (Lucía Aurora + another product) plus a demo line for the video.
+- [x] 6. Work-unit commit + `work-log.md` §6 + `session-03` phase 1.
 
-## Decisiones de diseño
+## Design decisions
 
-- **La comisión sale del documento, no del código**: si el texto no la declara, el motor responde "no puedo determinarlo" (nunca inventa). Un test fija los 5 valores reales.
-- **"Liquidada"**: el ledger no registra estado de liquidación → se tratan los movimientos posteados como liquidados, y eso se declara explícitamente en `caveats`.
-- **Mes evaluado**: mes calendario actual (UTC) del ledger.
-- **Producto sin política de comisión** (p. ej. cuenta de ahorro): resultado `undetermined` con explicación, sin inventar.
-- **Vigencia**: se consulta el índice ya filtrado por fecha de referencia (2026-09-24), así los archivados quedan fuera por diseño.
+- **The fee comes from the document, not from the code**: if the text does not state it, the engine answers "cannot determine it" (it never invents). A test pins the 5 real values.
+- **"Settled"**: the ledger does not record settlement status → posted movements are treated as settled, and this is stated explicitly in `caveats`.
+- **Evaluated month**: derived from the reference date (2026-09-24) rather than the wall clock, disclosed as a caveat and listed as a limitation in the submission.
+- **Product with no fee policy** (e.g. a savings account): `undetermined` result with an explanation, no invented figure.
+- **Validity**: the index is queried through the same validity filter at the reference date, so archived documents are excluded by design.
 
-## Resultado esperado (forma)
+## Expected result (shape)
 
 ```jsonc
 {
-  "status": "decided",            // o "undetermined"
+  "status": "decided",            // or "undetermined"
   "month": "2026-09",
   "policy": { "documentId": "aurora-fees-2026", "version": 2, "validFrom": "2026-09-01", "validTo": null },
   "accounts": [
