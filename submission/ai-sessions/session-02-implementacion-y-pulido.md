@@ -202,6 +202,18 @@ DOUBLE DEBIT CONFIRMED: one €1.00 intention debited €3.00.
 
 **Límites declarados**: el instrumento puntúa por presencia/ausencia de cifras (posible falso negativo ante respuestas comparativas; sesgo en contra de nuestra medición); y el arreglo no recupera valores archivados para preguntas históricas — verificado que en ese caso admite el hueco y ofrece soporte, sin inventar.
 
+## Fase 12 — Parte 2 extendida: Coach de comisiones (motor determinista)
+
+**Decisión**: entre dos propuestas de extensión para la Parte 2 (coach de comisiones del cliente vs. resumen de caso del operador), se eligió el **coach de comisiones** por ser la más distintiva y por combinar ledger + RAG + honestidad, con la decisión tomada por **código puro y testeable** en lugar del modelo.
+
+**Trabajo**: `src/banking/feePolicy.ts` (motor puro: producto desde la etiqueta de la cuenta, documento vigente del índice con los `archive-*` excluidos, comisión y regla de exención **parseadas del texto del documento**, condiciones evaluadas contra los movimientos del mes, caveats honestos sobre la ausencia de estado de liquidación en el ledger), tool `fee_status` (identidad del servidor), guía de prompt (el modelo presenta, nunca calcula) y 8 tests nuevos.
+
+**Verificación**: 52/52 tests, incluido el parseo de los cinco documentos reales (Aurora 6 · Horizon 3 · Cloud 0 · Community 2 · Family 5) y que el archivado (EUR 8) nunca se selecciona; en vivo con el modelo real, Lucía obtiene **EUR 0** con ambas condiciones cumplidas y cita `[aurora-fees-2026 v2]`, y su cuenta de ahorro da `undetermined` sin cifra inventada.
+
+**Corrección detectada en revisión del padre**: en la primera pasada el modelo adjuntó la cita de Aurora al caveat de la cuenta sin política (cita mal atribuida). Se endureció la guía (la cita solo acompaña a la afirmación que respalda) y se re-verificó: la respuesta de ahorros ya no cita política alguna.
+
+**Límites declarados**: parseo tolerante al corpus actual (ante reformulaciones cae en `undetermined`, con test que lo fija), mes evaluado derivado de la fecha de referencia y ventana de 100 movimientos de `/v1/movements`.
+
 ## Decisiones transversales y su porqué
 
 | Decisión | Porqué |
