@@ -104,6 +104,8 @@ Save the complete challenge conversations from your chosen tools and put the ori
 
 Optional settings are in `.env.example`. To move the bank port, update both `BANK_PORT` and `BANK_URL`. `DATA_DIR` and `BANK_DATA_DIR` can separate storage; both default to `.data/`. For separate startup, use `npm run bank` in one terminal and `npx next dev --webpack --hostname 127.0.0.1 --port 3000` in another; both must share `BANK_SERVICE_SECRET`.
 
+**Configuration precedence**: `config.ts` loads `.env.local` first and then `.env`, and a variable that is already set is never overwritten. That means an **empty** `OPENAI_API_KEY=` in `.env.local` shadows a real key coming from `.env` or from the process environment, producing a confusing connection error. Put the key in exactly one place; `npm run setup` leaves the line commented out so any source works.
+
 OpenAI 401 usually means an invalid key; 403/model errors can mean missing project access; 429 indicates quota or rate limits. `doctor` isolates these checks from the UI. Search also needs a key: a missing key returns an explicit `OPENAI_API_KEY` configuration message. After changing `.env.local`, restart the services. Ensure ports 3000/4001 are free. `reset` refuses to clear data if it detects running challenge services. Services bind to localhost and never move real money.
 
 On Windows, `better-sqlite3` 13.0.3 has a [reported installation issue](https://github.com/WiseLibs/better-sqlite3/issues/1516): `npm ci` may invoke `node-gyp` and fail when Python or C++ build tools are unavailable, including on Node 24. If this blocks setup, send the organizers the error and your Node/npm versions; an installation blocker is not part of the challenge.
