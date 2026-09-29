@@ -18,9 +18,10 @@ const { actor, sessionToken, sameOrigin, HttpError } = await import('../src/auth
 const { documents, readDocument } = await import('../src/ingestion/pipeline');
 const { chunkDocument } = await import('../src/ingestion/chunker');
 const { allChunks, replaceChunks } = await import('../src/retrieval/store');
+const { evaluateFees } = await import('../src/banking/feePolicy');
 const { searchDocuments } = await import('../src/retrieval/search');
 const { embeddingKey, vectorBuffer, dimensions } = await import('../src/retrieval/embeddings');
-import type { Chunk, DocumentRecord } from '../src/types';
+import type { BankMovement, Chunk, DocumentRecord } from '../src/types';
 
 const input = {
   fromAccountId: 'acc-lucia',
@@ -352,6 +353,8 @@ function startFakeBank() {
     lookup: null as null | ((reference: string) => FakeBankResponse),
     operator: null as null | (() => FakeBankResponse),
     contacts: null as null | (() => FakeBankResponse),
+    accounts: null as null | (() => FakeBankResponse),
+    movements: null as null | (() => FakeBankResponse),
   };
   const server = http.createServer((req, res) => {
     let raw = '';
@@ -384,9 +387,12 @@ function startFakeBank() {
             status: 'completed',
           });
       };
-      if (req.method === 'GET' && requestPath.startsWith('/v1/movements'))
+      if (req.method === 'GET' && requestPath.startsWith('/v1/movements')) {
+        if (behavior.movements) return respond(behavior.movements());
         return respond({ status: 200, payload: [] });
-      if (req.method === 'GET' && requestPath.startsWith('/v1/accounts'))
+      }
+      if (req.method === 'GET' && requestPath.startsWith('/v1/accounts')) {
+        if (behavior.accounts) return respond(behavior.accounts());
         return respond({
           status: 200,
           payload: [
@@ -399,6 +405,7 @@ function startFakeBank() {
             },
           ],
         });
+      }
       if (req.method === 'GET' && requestPath.startsWith('/v1/contacts')) {
         if (behavior.contacts) return respond(behavior.contacts());
         return respond({
@@ -1298,6 +1305,258 @@ test('closing a case is operator-only, persists, and rejects unknown or repeated
     'closed',
   );
   assert.equal((await close(open.id)).status, 409);
+});
+
+// --- Fee coach: deterministic fee engine (part 2) ---
+const feeAccount = (id: string, label: string) => ({
+  id,
+  userId: 'lucia',
+  label,
+  iban: 'ES91 2100 0418 4500',
+  balanceCents: 100000,
+});
+const feeMovement = (
+  accountId: string,
+  amountCents: number,
+  description: string,
+  day = 5,
+): BankMovement => ({
+  id: `mv-${accountId}-${description}-${amountCents}`,
+  accountId,
+  operationId: null,
+  amountCents,
+  description,
+  createdAt: `2026-09-${String(day).padStart(2, '0')}T10:00:00.000Z`,
+});
+const cardPurchases = (accountId: string, n: number) =>
+  Array.from({ length: n }, (_, i) =>
+    feeMovement(
+      accountId,
+      -(1000 + i * 25),
+      ['Groceries', 'Internet bill', 'Coffee shop', 'Transport', 'Pharmacy'][i],
+      5 + i,
+    ),
+  );
+
+// The evaluation month comes from the fixed reference date (2026-09-24), so
+// these tests are deterministic regardless of the real wall clock.
+test('the fee engine parses the fee from the text of each in-force fee document', () => {
+  seedApp();
+  const expected = [
+    ['Aurora account', 'aurora-fees-2026', 600],
+    ['Horizon account', 'horizon-fees-2026', 300],
+    ['Cloud account', 'cloud-fees-2026', 0],
+    ['Community account', 'community-fees-2026', 200],
+    ['Family account', 'family-fees-2026', 500],
+  ] as const;
+  const result = evaluateFees({
+    userId: 'lucia',
+    accounts: expected.map(([label], i) => feeAccount(`acc-${i}`, label)),
+    movements: [],
+  });
+  assert.equal(result.month, '2026-09');
+  expected.forEach(([label, documentId, feeCents], i) => {
+    const a = result.accounts[i];
+    assert.equal(a.label, label);
+    assert.equal(a.product, label.replace(/ account$/i, '').toLowerCase());
+    assert.equal(a.status, 'decided');
+    assert.equal(a.feeCents, feeCents);
+    assert.equal(a.policy?.documentId, documentId);
+    assert.equal(a.policy?.version, 2);
+  });
+  assert.equal(result.status, 'decided');
+});
+
+test('the salary waiver is detected from the document text for Aurora only', () => {
+  seedApp();
+  const result = evaluateFees({
+    userId: 'lucia',
+    accounts: [feeAccount('acc-a', 'Aurora account'), feeAccount('acc-h', 'Horizon account')],
+    movements: [],
+  });
+  const [aurora, horizon] = result.accounts;
+  assert.equal(aurora.conditions.length, 2);
+  assert.match(aurora.conditions[0].name, /salary/i);
+  assert.match(aurora.conditions[1].name, /purchase/i);
+  assert.equal(horizon.conditions.length, 0);
+  // The other documents only mention the waiver to say they do NOT use it.
+  assert.ok(result.caveats.some((c) => /horizon/i.test(c) && /flat/i.test(c)));
+});
+
+test('conditions are evaluated against the month movements with quoted evidence', () => {
+  seedApp();
+  const run = (salaryCents: number | null, purchases: number, extra: BankMovement[] = []) =>
+    evaluateFees({
+      userId: 'lucia',
+      accounts: [feeAccount('acc-a', 'Aurora account')],
+      movements: [
+        ...(salaryCents === null
+          ? []
+          : [feeMovement('acc-a', salaryCents, 'September salary', 2)]),
+        ...cardPurchases('acc-a', purchases),
+        ...extra,
+      ],
+    });
+  const [salary, card] = [0, 1].map((i) => run(119_999, 3).accounts[0].conditions[i]);
+  assert.equal(salary.met, false);
+  assert.match(salary.evidence, /September salary/);
+  assert.match(salary.evidence, /1,199\.99/);
+  assert.equal(card.met, true);
+
+  let r = run(175_000, 2);
+  assert.equal(r.accounts[0].conditions[0].met, true);
+  assert.match(r.accounts[0].conditions[0].evidence, /1,750\.00/);
+  assert.equal(r.accounts[0].conditions[1].met, false);
+  assert.equal(r.accounts[0].feeCents, 600);
+
+  r = run(120_000, 3);
+  assert.ok(r.accounts[0].conditions.every((c) => c.met));
+  assert.equal(r.accounts[0].feeCents, 0);
+
+  assert.equal(run(120_000, 0).accounts[0].conditions[1].met, false);
+  r = run(120_000, 4);
+  assert.equal(r.accounts[0].conditions[1].met, true);
+  assert.match(r.accounts[0].conditions[1].evidence, /4/);
+
+  // Transfers and the opening balance are not card purchases.
+  r = run(120_000, 1, [
+    feeMovement('acc-a', -5000, 'Transfer · Rent', 9),
+    feeMovement('acc-a', 240000, 'Opening balance', 1),
+  ]);
+  assert.equal(r.accounts[0].conditions[1].met, false);
+  assert.match(r.accounts[0].conditions[1].evidence, /1 card-like purchase/);
+  assert.match(r.accounts[0].conditions[1].evidence, /Groceries/);
+
+  // No salary at all: the condition is not met with honest evidence.
+  const none = run(null, 4).accounts[0].conditions[0];
+  assert.equal(none.met, false);
+  assert.match(none.evidence, /no salary payment/i);
+});
+
+test('a product without an in-force fee policy stays undetermined without an invented fee', () => {
+  seedApp();
+  const result = evaluateFees({
+    userId: 'lucia',
+    accounts: [feeAccount('acc-s', 'Personal savings')],
+    movements: [feeMovement('acc-s', 100, 'Interest')],
+  });
+  const a = result.accounts[0];
+  assert.equal(a.status, 'undetermined');
+  assert.equal(a.feeCents, null);
+  assert.equal(a.policy, null);
+  assert.match(a.reason!, /no in-force fee policy document/i);
+  assert.equal(result.status, 'undetermined');
+  assert.ok(result.caveats.some((c) => /Personal savings/i.test(c)));
+});
+
+test('an archived Aurora fee document is never selected for the current month', () => {
+  seedApp();
+  // The trap is really in the seeded index.
+  assert.ok(allChunks().some((c) => c.documentId.startsWith('archive-aurora')));
+  const result = evaluateFees({
+    userId: 'lucia',
+    accounts: [feeAccount('acc-a', 'Aurora account')],
+    movements: [],
+  });
+  assert.equal(result.accounts[0].policy?.documentId, 'aurora-fees-2026');
+  assert.notEqual(result.accounts[0].feeCents, 800);
+  assert.equal(result.accounts[0].feeCents, 600);
+});
+
+test('a waiver mention that cannot be parsed stays undetermined instead of guessing', () => {
+  seedApp();
+  const vector = Array.from({ length: dimensions }, (_, i) => (i === 0 ? 1 : 0));
+  replaceChunks(
+    [
+      {
+        id: 'chunk-puzzle-fee',
+        documentId: 'puzzle-fees-2026',
+        text: 'The monthly fee for Puzzle is EUR 4. Part of the fee may be waived under some circumstances.',
+        title: 'Puzzle · fees',
+        version: 2,
+        validFrom: '2026-01-01',
+        validTo: null,
+        audience: 'public',
+        vector,
+      },
+    ],
+    { model: config.embeddingModel, dimensions },
+  );
+  const result = evaluateFees({
+    userId: 'lucia',
+    accounts: [feeAccount('acc-p', 'Puzzle account')],
+    movements: [],
+  });
+  const a = result.accounts[0];
+  assert.equal(a.status, 'undetermined');
+  assert.equal(a.feeCents, null);
+  assert.match(a.reason!, /waiver rule that cannot be parsed/);
+});
+
+test('caveats disclose the settlement assumption and the evaluated month', () => {
+  seedApp();
+  const result = evaluateFees({
+    userId: 'lucia',
+    accounts: [feeAccount('acc-a', 'Aurora account')],
+    movements: [],
+  });
+  assert.ok(result.caveats.some((c) => /settled/i.test(c) && /settlement status/i.test(c)));
+  assert.ok(result.caveats.some((c) => /2026-09/.test(c)));
+});
+
+test('the fee_status tool decides from the ledger served by the bank', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  fakeBank.behavior.accounts = () => ({
+    status: 200,
+    payload: [
+      feeAccount('acc-lucia', 'Aurora account'),
+      feeAccount('acc-lucia-savings', 'Personal savings'),
+    ],
+  });
+  fakeBank.behavior.movements = () => ({
+    status: 200,
+    payload: [
+      feeMovement('acc-lucia', 175000, 'September salary', 2),
+      ...cardPurchases('acc-lucia', 4),
+    ],
+  });
+  try {
+    const { toolDefinitions, runTool } = await import('../src/agent/tools');
+    const definition = toolDefinitions.find((t) => t.name === 'fee_status');
+    assert.ok(definition);
+    assert.deepEqual(definition.parameters, {
+      type: 'object',
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    });
+    const result = (await runTool('fee_status', {}, {
+      userId: 'lucia',
+      conversationId: null,
+      runId: 'run-fee',
+      intentId: 'intent-fee',
+    } as any)) as any;
+    // The savings account has no fee policy, so the aggregate is undetermined,
+    // but the Aurora account is fully decided from the ledger.
+    assert.equal(result.status, 'undetermined');
+    assert.ok(result.caveats.some((c: string) => /settled/i.test(c)));
+    const aurora = result.accounts.find((a: any) => a.product === 'aurora');
+    assert.equal(aurora.status, 'decided');
+    assert.equal(aurora.feeCents, 0);
+    assert.equal(aurora.policy.documentId, 'aurora-fees-2026');
+    assert.ok(aurora.conditions.every((c: any) => c.met));
+    const savings = result.accounts.find((a: any) => a.product === 'personal savings');
+    assert.equal(savings.status, 'undetermined');
+    assert.equal(savings.feeCents, null);
+    // Identity comes from the session, never from tool arguments.
+    assert.deepEqual([...new Set(fakeBank.requests.map((r) => r.actor))], ['lucia']);
+  } finally {
+    fakeBank.behavior.accounts = null;
+    fakeBank.behavior.movements = null;
+  }
 });
 
 test('the migration adds cancelled_at to an existing approvals table', async () => {

@@ -3,10 +3,11 @@ import { z } from 'zod';
 import type { FunctionTool } from 'openai/resources/responses/responses';
 import { bankRequest } from '../banking/client';
 import { transferMoney } from '../banking/actions';
+import { evaluateFees } from '../banking/feePolicy';
 import { searchDocuments } from '../retrieval/search';
 import { appDb } from '../db';
 import { recordEvent } from '../telemetry';
-import type { ToolContext } from '../types';
+import type { Account, BankMovement, ToolContext } from '../types';
 const object = (properties: Record<string, unknown>) => ({
   type: 'object',
   properties,
@@ -27,6 +28,14 @@ export const toolDefinitions: FunctionTool[] = [
     name: 'search_documents',
     description: "Search the bank's documentation for policies and procedures.",
     parameters: object({ query: string }),
+    strict: true,
+  },
+  {
+    type: 'function',
+    name: 'fee_status',
+    description:
+      "Return the monthly fee per account for the current month, decided deterministically from the customer's own ledger crossed with the in-force policy document: fee amount, waiver conditions with evidence, policy citation, and caveats. Use it for any question about fees or charges instead of answering from documentation alone.",
+    parameters: object({}),
     strict: true,
   },
   {
@@ -75,6 +84,16 @@ export async function runTool(name: string, args: unknown, ctx: ToolContext): Pr
           ),
         };
         break;
+      case 'fee_status': {
+        // Identity comes from the session server-side; tool arguments carry no
+        // user id, so the customer can only ever see their own data.
+        const [accounts, movements] = await Promise.all([
+          bankRequest<Account[]>(ctx.userId, '/v1/accounts'),
+          bankRequest<BankMovement[]>(ctx.userId, '/v1/movements'),
+        ]);
+        result = evaluateFees({ userId: ctx.userId, accounts, movements });
+        break;
+      }
       case 'transfer_money':
         result = await transferMoney(ctx, args);
         break;

@@ -202,6 +202,28 @@ DOUBLE DEBIT CONFIRMED: one €1.00 intention debited €3.00.
 
 **Límites declarados**: el instrumento puntúa por presencia/ausencia de cifras (posible falso negativo ante respuestas comparativas; sesgo en contra de nuestra medición); y el arreglo no recupera valores archivados para preguntas históricas — verificado que en ese caso admite el hueco y ofrece soporte, sin inventar.
 
+## Fase 12 — Parte 2 extendida: Coach de comisiones (motor determinista)
+
+**Decisión de diseño**: se eligió el **coach de comisiones** como extensión de la Parte 2 por ser la propuesta más distintiva y por combinar ledger + RAG + honestidad, con la decisión tomada por **código puro y testeable** en lugar del modelo.
+
+**Trabajo**: `src/banking/feePolicy.ts` (motor puro: producto desde la etiqueta de la cuenta, documento vigente del índice con los `archive-*` excluidos, comisión y regla de exención **parseadas del texto del documento**, condiciones evaluadas contra los movimientos del mes, caveats honestos sobre la ausencia de estado de liquidación en el ledger), tool `fee_status` (identidad del servidor), guía de prompt (el modelo presenta, nunca calcula) y 8 tests nuevos.
+
+**Verificación**: 52/52 tests, incluido el parseo de los cinco documentos reales (Aurora 6 · Horizon 3 · Cloud 0 · Community 2 · Family 5) y que el archivado (EUR 8) nunca se selecciona; en vivo con el modelo real, Lucía obtiene **EUR 0** con ambas condiciones cumplidas y cita `[aurora-fees-2026 v2]`, y su cuenta de ahorro da `undetermined` sin cifra inventada.
+
+**Corrección detectada en revisión del padre**: en la primera pasada el modelo adjuntó la cita de Aurora al caveat de la cuenta sin política (cita mal atribuida). Se endureció la guía (la cita solo acompaña a la afirmación que respalda) y se re-verificó: la respuesta de ahorros ya no cita política alguna.
+
+**Límites declarados**: parseo tolerante al corpus actual (ante reformulaciones cae en `undetermined`, con test que lo fija), mes evaluado derivado de la fecha de referencia y ventana de 100 movimientos de `/v1/movements`.
+
+## Fase 13 — Endurecimiento de la configuración de entorno
+
+**Contexto**: el fallo que bloqueó el proyecto el primer día (el `OPENAI_API_KEY=` **vacío** que `setup.ts` escribía en `.env.local`, que tapaba la key real de `.env` porque `config.ts` carga `.env.local` primero y dotenv no pisa variables ya definidas) se había diagnosticado y resuelto en la máquina, pero **no estaba corregido en el código**. Cualquier persona que clonara la entrega y configurara la key por la vía natural (`.env` o variable de entorno) habría chocado con el mismo error confuso en su primer `npm run doctor`.
+
+**Trabajo** (rama `fix/env-precedence`, desde `dev`): `scripts/setup.ts` ahora escribe `.env.local` a partir del ejemplo con la línea `OPENAI_API_KEY` **comentada**, de modo que la key puede venir de `.env.local`, de `.env` o del entorno sin que un valor vacío la tape; y `README.md` documenta la regla de precedencia y la trampa.
+
+**Verificación**: se borró `.env.local`, se ejecutó `npm run setup` y se comprobó que el archivo generado contiene `# OPENAI_API_KEY=`; el `.env.local` original se restauró **byte-idéntico** (verificado con `diff`). `npm run typecheck` y `npm test` (44/44 en esa rama) en verde.
+
+**Nota de método**: se eligió una rama propia desde `dev` en vez de colarlo en la rama del fee coach, para no mezclar un arreglo de entorno con una feature de producto.
+
 ## Decisiones transversales y su porqué
 
 | Decisión | Porqué |

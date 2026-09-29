@@ -14,6 +14,7 @@
 3. [Bug 2: Documentación caducada en las respuestas](#3-bug-2-documentación-caducada-en-las-respuestas-del-asistente)
 4. [Parte 2: Trust Layer](#4-parte-2--trust-layer-feature-distintiva)
 5. [Estado final: hecho / verificado / pendiente](#estado-final-hecho--verificado--pendiente)
+6. [Parte 2 (extensión): Coach de comisiones](#6-parte-2-extensión--coach-de-comisiones)
 
 ---
 
@@ -111,6 +112,10 @@ Instrumento: `scripts/eval-answers.ts` — 7 preguntas con verdad de referencia 
 **Segundo problema**: `npm run doctor` fallaba con `connection_or_configuration_error` aunque la key estaba en `.env`.
 **Causa raíz**: `scripts/setup.ts` crea `.env.local` con `OPENAI_API_KEY=` **vacío**, y `src/config.ts:3-4` carga `.env.local` antes que `.env`. dotenv no pisa variables ya definidas → el valor vacío tapaba la key real.
 **Arreglo**: eliminar la línea vacía de `.env.local`. Doctor posterior: verde.
+
+**Arreglo de código (no solo del entorno local)** — rama `fix/env-precedence`, commit `c16bca1`: `scripts/setup.ts` ahora escribe `.env.local` con la línea `OPENAI_API_KEY` **comentada**, así la key puede venir de `.env.local`, de `.env` o del entorno sin que un valor vacío la tape; y `README.md` documenta la precedencia y la trampa. Sin esto, cualquiera que clonara la entrega chocaba con el mismo error confuso en su primer `npm run doctor`.
+
+Verificación: se borró `.env.local`, se ejecutó `npm run setup` y el archivo generado contiene `# OPENAI_API_KEY=`; el original se restauró byte-idéntico (probado con `diff`).
 
 **Verificación final** (walkthrough del README, todo por API y UI):
 - `npm run doctor` → `gpt-6-luna` responde, embeddings 1536 dims ✅
@@ -354,6 +359,60 @@ Este fix cierra el círculo del video: el mismo caso muestra la propuesta de con
 
 ---
 
+## 6. Parte 2 (extensión) — Coach de comisiones
+
+**Fecha**: 29-09-2026 · **Estado**: IMPLEMENTADO · **Rama**: `feature/fee-coach` (commit `17a0b34`)
+
+### La idea
+
+*"¿me van a cobrar comisión este mes?"* — el agente **cruza los movimientos reales del cliente con la política vigente** y responde con la cifra, las condiciones evaluadas una por una y la cita del documento. **La decisión la toma código puro y testeable; el modelo solo la presenta.**
+
+### Por qué es distintiva
+
+Un chatbot genérico puede *explicar* la política de comisiones; este **la evalúa contra el ledger del cliente**. Y compone todo lo construido antes: ledger verificado (exactly-once y reconciliación), documentos filtrados por vigencia, citas trazables y honestidad explícita sobre lo que no se puede saber.
+
+### Cómo decide (sin LLM)
+
+`src/banking/feePolicy.ts`, función pura y sin efectos:
+
+1. **Etiqueta de la cuenta → producto** (`"Aurora account"` → `aurora`).
+2. **Documento vigente** desde el índice, con la misma semántica de vigencia que la búsqueda (a la fecha de referencia 2026-09-24); los `archive-*` **nunca** son candidatos.
+3. **La comisión se parsea del TEXTO del documento**, no de una tabla hardcodeada: cubre `"The Aurora account monthly fee is EUR 6."` y `"The monthly fee for Horizon is EUR 3."`. Si el texto no la declara → `undetermined`, nunca una cifra inventada.
+4. **La regla de exención también sale del texto**: solo Aurora la tiene; los demás documentos la niegan explícitamente. Umbrales parseados: `EUR 1,200` y `three settled card purchases`. Si menciona una exención que no se puede parsear → `undetermined`.
+5. **Condiciones contra los movimientos del mes del cliente**: nómina (positivo con `salary`, ≥ umbral) y compras con tarjeta (negativos excluyendo transferencias y saldo inicial), con la evidencia real citada.
+6. **`caveats` honestos**: el ledger **no registra estado de liquidación** (los movimientos posteados se tratan como liquidados) y los posteos cerca del límite de mes pueden caer en el mes contiguo.
+
+### Verificación
+
+- **52/52 tests** (8 nuevos): parseo de los cinco documentos vigentes reales (**Aurora 6 · Horizon 3 · Cloud 0 · Community 2 · Family 5**), exención detectada solo en Aurora, matriz de condiciones con ledgers sintéticos (con/sin nómina, 0–4 compras, transferencias excluidas), cuenta de ahorro → `undetermined`, **archivado nunca seleccionado**, caveat de liquidación, exención imparseable → `undetermined`, y la tool end-to-end contra el banco fake.
+- **En vivo (modelo real)**:
+
+```text
+"Will I be charged a fee for my Aurora account this month?"
+
+For your Aurora account, the fee for September is EUR 0. Both waiver
+conditions were met: a salary payment of EUR 1,750 (minimum EUR 1,200)
+and four card-like purchases (minimum three) [aurora-fees-2026 v2].
+
+Caveats: Posted movements are treated as settled because the ledger
+does not record settlement status. …
+
+"…my Personal savings account…"
+Personal savings: Undetermined. No in-force fee policy was found for
+this account, so I can't confirm whether you'll be charged. …
+```
+
+Nota de precisión: en una primera pasada el modelo adjuntó la cita de Aurora al caveat de la cuenta de ahorro (cita mal atribuida). Se corrigió la guía del prompt — la cita solo puede acompañar a la afirmación que respalda — y se re-verificó: la respuesta de ahorros ya no cita ninguna política.
+
+### Límites declarados
+
+- El parseo tolera el corpus actual, no cualquier redacción futura: ante una reformulación cae en `undetermined` (seguro, aunque silencioso), y hay un test que fija ese comportamiento.
+- El mes evaluado deriva de la fecha de referencia (2026-09-24), no del reloj real; un despliegue real debería cambiar la fuente de "ahora".
+- `/v1/movements` devuelve hasta 100 movimientos: una cuenta muy activa podría desplazar compras del mes fuera de la ventana.
+
+
+---
+
 ## Estado final: hecho / verificado / pendiente
 
 ### Terminado
@@ -364,11 +423,11 @@ Este fix cierra el círculo del video: el mismo caso muestra la propuesta de con
 3. Confirmación explícita inexistente → propuestas con caducidad, consumo atómico, cancelación real (Discard), reutilización/supersede y registro del desenlace en la conversación.
 4. Operador ciego → telemetría íntegra, detalle de caso con conversación/actividad/operaciones bancarias, "gaps" honestos y cierre de casos.
 
-**Parte 2 (feature distintiva)** — *Trust Layer*: confirmación inline en el chat con cuenta atrás y re-petición + respuestas con citas verificables (documento, versión, vigencia) y conducta sin evidencia.
+**Parte 2 (feature distintiva)** — *Trust Layer*: confirmación inline en el chat con cuenta atrás y re-petición + respuestas con citas verificables (documento, versión, vigencia) y conducta sin evidencia. **Extensión**: *Coach de comisiones* — motor de reglas determinista que cruza el ledger del cliente con la política vigente (§6).
 
 ### Verificado
 
-- **44 tests** en `npm test` (todos pasan) + `npm run typecheck` limpio.
+- **52 tests** en `npm test` (todos pasan) + `npm run typecheck` limpio.
 - **Reproducción reproducible del bug crítico**: `scripts/repro-double-debit.ts` (€1,00 → €3,00 antes; €1,00 exacto después).
 - **Eval medido antes/después** (§0c): BEFORE 1/14 pasan · 0/14 citan → AFTER 14/14 pasan · 12/12 de las citas exigidas; 28 respuestas sin ninguna cifra inventada.
 - **Casos sembrados del propio starter** (§0b) re-verificados en vivo tras los arreglos.
