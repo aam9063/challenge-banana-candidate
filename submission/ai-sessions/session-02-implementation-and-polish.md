@@ -1,21 +1,21 @@
-# Sesión 02 — Implementación: Parte 1 (4 bugs), Parte 2 (Trust Layer) y pulido UX
+# Session 02 — Implementation: Part 1 (4 bugs), Part 2 (Trust Layer) and UX polish
 
-- **Fecha**: 28 de septiembre de 2026
-- **Herramienta**: pi coding agent (harness), sesión del host principal + subagentes (exploración, workers de implementación)
-- **Idioma**: conversación en castellano; artefactos de código en inglés
+- **Date**: 28 September 2026
+- **Tool**: pi coding agent (harness), main host session + subagents (exploration, implementation workers)
+- **Language**: conversation in Spanish; code artifacts in English
 
-> **Nota de método**: este archivo se mantiene de forma continua durante la sesión. Recoge los mensajes del usuario y el trabajo del asistente: decisiones, comandos, evidencia y resultados. Las sesiones 01 y 02 corresponden a la misma sesión de trabajo del harness, divididas por hito (setup / implementación) para que sean legibles.
+> **Method note**: this file is maintained continuously during the session. It collects the user's messages and the assistant's work: decisions, commands, evidence and results. Sessions 01 and 02 correspond to the same harness work session, split by milestone (setup / implementation) for readability.
 
 ---
 
-## Mensajes del usuario (sesión del 28-09-2026)
+## User messages (session of 28-09-2026)
 
-1. "Vale a ver este es un proyecto para una hackaton. Quiero que vayas a fuego con ella... En la carpeta docs tienes challenge.md y contracts.md... antes leete el readme e intenta instalar las dependencias porque a mi me da fallos y errores y a ver porque son... Creo que hay que adjuntar los archivos de las sesiones de IA... eso vas a empezar a guardarlo a partir de que tengamos todo el setup listo... Cuando consigas instalar dependencias explicame que es lo que hay que hacer y en que consiste el proyecto" *(repetido dos veces)*
+1. "Vale a ver este es un proyecto para una hackaton. Quiero que vayas a fuego con ella... En la carpeta docs tienes challenge.md y contracts.md... antes leete el readme e intenta instalar las dependencias porque a mi me da fallos y errores y a ver porque son... Creo que hay que adjuntar los archivos de las sesiones de IA... eso vas a empezar a guardarlo a partir de que tengamos todo el setup listo... Cuando consigas instalar dependencias explicame que es lo que hay que hacer y en que consiste el proyecto" *(repeated twice)*
 2. "voy a crear el .env que no estara trackeado por git y ahi irá la api key, te aviso ahora"
 3. "ya está. Una cosa que se me ha olvidado decirte, todas las features saldran a ramas a partir de dev no de master. Todo pasara por dev antes de master"
 4. "Sí. Quiero que lo documentes todo cuando lo implementes. A parte de las sesiones de IA quiero otro md para registrar todo para hacer el video explicativo y documentarlo bien"
 5. "lo de los docs caducados depende de esta rama de fix? si no es asi continia en otra rama,si depende hazlo en la misma ya que no puedo mergear ahora mismo"
-6. "vamos con la c pues" *(elegir la Parte 2 — feature distintiva — tras presentar opciones)*
+6. "vamos con la c pues" *(choosing Part 2 — the distinctive feature — after options were presented)*
 7. "sigue con el bug 4"
 8. "de momento se queda asi. Cuando me ponga delante del pc comprobaré todo y a ver si podmeos mejorar algo y seguramemente mejoraremos la UI (aunque no la he visto todavia)"
 9. "pi update --extensions"
@@ -28,23 +28,23 @@
 
 ---
 
-## Fase 0 — Cierre del setup (puente con la Sesión 01)
+## Phase 0 — Setup closing (bridge with Session 01)
 
-- Diagnóstico y arreglo del fallo de instalación (toolset C++ de Visual Studio) y del `.env.local` vacío que tapaba la API key.
-- `npm run doctor` en verde; walkthrough del README verificado por API: Lucía con 2 cuentas, Marta con 17 casos, chat respondiendo con saldos exactos.
-- Convención de ramas registrada (features salen de `dev`; todo pasa por `dev` antes de `master`) y guardada en memoria del proyecto.
+- Diagnosis and fix of the installation failure (Visual Studio C++ toolset) and of the empty `.env.local` that was masking the API key.
+- `npm run doctor` green; README walkthrough verified via API: Lucía with 2 accounts, Marta with 17 cases, chat answering with exact balances.
+- Branch convention recorded (features branch out of `dev`; everything goes through `dev` before `master`) and saved in project memory.
 
 ---
 
-## Fase 1 — Bug 1: doble débito en reintentos de transferencia
+## Phase 1 — Bug 1: double debit on transfer retries
 
-**Rama**: `fix/transfer-idempotency` (desde `dev`).
+**Branch**: `fix/transfer-idempotency` (from `dev`).
 
-**Exploración**: mapeo completo del código por un subagente de exploración (8 debilidades priorizadas); lectura directa de `src/banking/{dispatch,actions,client,authorization}.ts`, `src/agent/tools.ts`, `src/retrieval/*`, `src/operator/view.ts`, `src/telemetry.ts`.
+**Exploration**: full code mapping by an exploration subagent (8 prioritized weaknesses); direct reading of `src/banking/{dispatch,actions,client,authorization}.ts`, `src/agent/tools.ts`, `src/retrieval/*`, `src/operator/view.ts`, `src/telemetry.ts`.
 
-**Reproducción (determinista)**: script `scripts/repro-double-debit.ts` con el perfil `lost-response` del banco simulado (la operación se compromete y después se pierde la respuesta).
+**Reproduction (deterministic)**: script `scripts/repro-double-debit.ts` with the simulated bank's `lost-response` profile (the operation commits and the response is then lost).
 
-**Resultado before — peor de lo previsto**:
+**Before result — worse than expected**:
 
 ```text
 transfer: acc-lucia -> acc-bruno amount €1.00
@@ -57,165 +57,165 @@ balance after retry:         €4004.50  (delta -€3.00)
 DOUBLE DEBIT CONFIRMED: one €1.00 intention debited €3.00.
 ```
 
-**Causa raíz (3 defectos compuestos)**:
-1. `dispatch.ts`: cada intento generaba `randomUUID()` nuevo → el retry interno ante 504 cobraba otra vez (2º débito).
-2. `actions.ts`: al reintentar el mismo `intentId` solo se validaba usuario/payload, nunca el `status` → 3er débito.
-3. `intents.bank_reference` se sobrescribía → la referencia comprometida se perdía para reconciliación.
+**Root cause (3 compounded defects)**:
+1. `dispatch.ts`: every attempt generated a new `randomUUID()` → the internal retry on 504 charged again (2nd debit).
+2. `actions.ts`: when retrying the same `intentId` only user/payload were validated, never the `status` → 3rd debit.
+3. `intents.bank_reference` was overwritten → the committed reference was lost for reconciliation.
 
-**Arreglo (delegado a worker con spec cerrada, TDD)**:
-- `stableReference(intentId)`: una reference por intent, persistida una vez, reutilizada en todo intento (el banco entonces hace replay).
-- Gates de estado del intent: `completed` → resultado almacenado; `processing` → reconciliación, nunca re-despacho.
-- `reconcileOutcome()`: tras 5xx consulta `GET /v1/operations/:reference` → encontrada = `completed` (hecho verificado); 404 = `failed` (ausencia verificada); fallo de consulta = `processing` no terminal. **Nunca `failed` sin evidencia.**
+**Fix (delegated to a worker with a closed spec, TDD)**:
+- `stableReference(intentId)`: one reference per intent, persisted once, reused on every attempt (the bank then performs a replay).
+- Intent status gates: `completed` → stored result; `processing` → reconciliation, never re-dispatch.
+- `reconcileOutcome()`: after a 5xx, query `GET /v1/operations/:reference` → found = `completed` (verified fact); 404 = `failed` (verified absence); query failure = non-terminal `processing`. **Never `failed` without evidence.**
 
-**Verificación after**: `npm test` 17/17 (4 tests nuevos RED→GREEN con banco fake in-process); typecheck OK; repro impreso como "No double debit observed" con delta exacto −€1,00 y reintento sin efectos.
+**After verification**: `npm test` 17/17 (4 new tests RED→GREEN with an in-process fake bank); typecheck OK; repro printed as "No double debit observed" with exact delta −€1,00 and retry without side effects.
 
 **Commits**: `404847c` (scaffolding + repro), `8056774` (fix), `ab28c45` (docs).
 
 ---
 
-## Fase 2 — Bug 2: documentación caducada en las respuestas
+## Phase 2 — Bug 2: stale documentation in the answers
 
-**Rama**: `fix/stale-doc-retrieval` (apilada sobre la anterior: comparten `submission/work-log.md` y `odd/`, así que ramificar de `dev` habría garantizado conflictos; el usuario no podía mergear en ese momento).
+**Branch**: `fix/stale-doc-retrieval` (stacked on the previous one: they share `submission/work-log.md` and `odd/`, so branching from `dev` would have guaranteed conflicts; the user could not merge at that moment).
 
-**Causa raíz**: `chunker.ts` solo ponía `title/version/validFrom/validTo` en el chunk de offset 0 (el resto `null` → sin filtrado posible y UI "Version —"); `search.ts` filtraba solo por audiencia → políticas archivadas (`archive-*`, vigentes hasta 2026-08-31) competían con la política vigente a la fecha de referencia (2026-09-24).
+**Root cause**: `chunker.ts` only put `title/version/validFrom/validTo` on the offset-0 chunk (the rest `null` → no filtering possible and UI "Version —"); `search.ts` filtered only by audience → archived policies (`archive-*`, in force until 2026-08-31) competed with the policy in force at the reference date (2026-09-24).
 
-**Arreglo**: metadatos propagados a todos los chunks (ids `sha256(docId:offset:text)` sin metadatos → cache de embeddings intacto, re-ingesta sin coste); filtro de vigencia inclusivo con `null` = abierto; re-ingesta + export del índice portable (356 chunks).
+**Fix**: metadata propagated to all chunks (ids `sha256(docId:offset:text)` without metadata → embeddings cache intact, re-ingestion at no cost); inclusive currency filter with `null` = open; re-ingestion + export of the portable index (356 chunks).
 
-**Verificación**: `npm test` 19/19 (2 nuevos); búsqueda en vivo "Aurora account fees" → solo documentos v2 vigentes, cero `archive-*`; chunks con metadatos completos.
+**Verification**: `npm test` 19/19 (2 new); live search "Aurora account fees" → only in-force v2 documents, zero `archive-*`; chunks with full metadata.
 
 **Commits**: `38fc5ed` (fix), `075bcc6` (docs).
 
 ---
 
-## Fase 3 — Parte 2: Trust Layer (feature distintiva)
+## Phase 3 — Part 2: Trust Layer (distinctive feature)
 
-**Decisión de producto**: se presentaron 4 opciones al usuario (Trust Layer completa / solo confirmaciones / solo citas / copiloto de operador) con previews; **el usuario eligió la Trust Layer completa**. Rama `feature/trust-layer` (apilada).
+**Product decision**: 4 options were presented to the user (full Trust Layer / confirmations only / citations only / operator copilot) with previews; **the user chose the full Trust Layer**. Branch `feature/trust-layer` (stacked).
 
-### Tarea 1 — Flujo de aprobaciones (arregla de paso el Bug 3)
+### Task 1 — Approvals flow (fixes Bug 3 along the way)
 
-**Hallazgo**: la infraestructura existía completa pero desconectada — tabla `approvals` con `expires_at`/`consumed_at`, endpoint `confirm`, panel en la UI y estado `requires_confirmation` manejado; `authorizeTransfer` siempre devolvía `null` (código muerto).
+**Finding**: the infrastructure existed complete but disconnected — `approvals` table with `expires_at`/`consumed_at`, `confirm` endpoint, panel in the UI and `requires_confirmation` status handled; `authorizeTransfer` always returned `null` (dead code).
 
-**Implementación**: propuestas de 10 minutos creadas/reusadas por intent; camino confirm con validaciones 404/409-consumida/410-expirada/409-payload-alterado y **consumo atómico** (`UPDATE ... WHERE consumed_at IS NULL` + `changes===1`); checks tempranos en el endpoint confirm.
+**Implementation**: 10-minute proposals created/reused per intent; confirm path with validations 404/409-consumed/410-expired/409-altered-payload and **atomic consumption** (`UPDATE ... WHERE consumed_at IS NULL` + `changes===1`); early checks in the confirm endpoint.
 
-**Verificación**: `npm test` 24/24 (5 tests TDD nuevos); E2E en vivo: propuesta → panel → confirm → completada con un único débito de €1,00 → segundo confirm 409.
+**Verification**: `npm test` 24/24 (5 new TDD tests); live E2E: proposal → panel → confirm → completed with a single €1,00 debit → second confirm 409.
 
-### Tarea 2 — Citas verificables (evidencia trazable)
+### Task 2 — Verifiable citations (traceable evidence)
 
-**Hallazgo**: el prompt invitaba a inventar ("common banking practices", "concrete estimates", "references are not required") — postura inaceptable para un banco.
+**Finding**: the prompt invited making things up ("common banking practices", "concrete estimates", "references are not required") — an unacceptable stance for a bank.
 
-**Implementación**: instrucciones evidence-first (fuentes vigentes > conocimiento de fondo; cita obligatoria `[docId vN]` en toda afirmación de política/tarifa/límite; prohibido estimar; sin evidencia → admitirlo + siguiente paso concreto); guía para presentar `requires_confirmation` como propuesta no ejecutada; chips de cita clicables en el chat; test de invariante del prompt.
+**Implementation**: evidence-first instructions (in-force sources > background knowledge; mandatory citation `[docId vN]` on every policy/fee/limit claim; estimating forbidden; no evidence → admit it + concrete next step); guidance to present `requires_confirmation` as a proposal that was not executed; clickable citation chips in the chat; prompt invariant test.
 
-**Verificación**: `npm test` 25/25; en vivo: pregunta de comisiones respondida con `[aurora-fees-2026 v2]`; límite documentado citado en vez de inventado; petición de transferencia respondida con propuesta sin afirmar ejecución.
+**Verification**: `npm test` 25/25; live: fee question answered with `[aurora-fees-2026 v2]`; documented limit cited instead of invented; transfer request answered with a proposal without claiming execution.
 
-**Commits**: `1b1099a` (aprobaciones), `53d3333` (citas), `f91c202` (docs + guión de video de 6 pasos), `607cfcf`/`92fc624` (tracking).
+**Commits**: `1b1099a` (approvals), `53d3333` (citations), `f91c202` (docs + 6-step video script), `607cfcf`/`92fc624` (tracking).
 
 ---
 
-## Fase 4 — Bug 4: visibilidad de operador y telemetría
+## Phase 4 — Bug 4: operator visibility and telemetry
 
-**Rama**: `fix/operator-visibility` (apilada).
+**Branch**: `fix/operator-visibility` (stacked).
 
-**Causa raíz**: `caseDetail` devolvía `history/events/intents` vacíos y `bank: null` hardcodeados; `recordEvent` descartaba args/outputs/duración guardando solo `{tool,status}`; ninguna ruta cerraba casos; el endpoint de operador del banco nunca se usaba.
+**Root cause**: `caseDetail` returned empty `history/events/intents` and hardcoded `bank: null`; `recordEvent` discarded args/outputs/duration, storing only `{tool,status}`; no route closed cases; the bank's operator endpoint was never used.
 
-**Arreglo**: telemetría con payload íntegro; `caseDetail` poblado (conversación, eventos, intents, operaciones bancarias del cliente con el operador como actor firmante); `gaps` honestos cuando falta evidencia o el banco no responde (nunca fabricar); `POST /api/incidents/:id/close` + botón "Resolve case".
+**Fix**: telemetry with full payload; `caseDetail` populated (conversation, events, intents, the customer's bank operations with the operator as signing actor); honest `gaps` when evidence is missing or the bank does not respond (never fabricate); `POST /api/incidents/:id/close` + "Resolve case" button.
 
-**Verificación**: `npm test` 29/29 (4 nuevos); en vivo: caso creado por Lucía → Marta ve 2 mensajes, 8 eventos con `arguments/output/durationMs`, la operación de €1,00 con su reference, cierra el caso y el segundo cierre da 409.
+**Verification**: `npm test` 29/29 (4 new); live: case created by Lucía → Marta sees 2 messages, 8 events with `arguments/output/durationMs`, the €1,00 operation with its reference, closes the case and the second close returns 409.
 
 **Commits**: `691c5b1` (feat), `cfa6bd4` (docs).
 
 ---
 
-## Fase 5 — Pulido UX de confirmación (feedback real del usuario)
+## Phase 5 — Confirmation UX polish (real user feedback)
 
-**Contexto**: el usuario probó la UI real y reportó "está todo el rato la transferencia pendiente de confirmación". Diagnóstico con evidencia (DB + logs): las 4 propuestas anteriores se confirmaron y ejecutaron correctamente; la última simplemente esperaba confirmación, y el panel quedaba fuera de vista sin indicar caducidad.
+**Context**: the user tried the real UI and reported "está todo el rato la transferencia pendiente de confirmación". Diagnosis with evidence (DB + logs): the 4 previous proposals were confirmed and executed correctly; the last one was simply awaiting confirmation, and the panel was out of view without indicating expiry.
 
-**Implementación** (`feature/confirmation-ux`): tarjeta inline bajo el formulario con nombres humanos, auto-scroll, cuenta atrás m:ss, estado expirado con "Request again" que re-llena el formulario, outcomes explícitos (éxito/already-confirmed/expired), cuenta atrás también en el panel.
+**Implementation** (`feature/confirmation-ux`): inline card under the form with human-readable names, auto-scroll, m:ss countdown, expired state with "Request again" that re-fills the form, explicit outcomes (success/already-confirmed/expired), countdown in the panel too.
 
-**Verificación**: typecheck + 29/29 + smoke E2E por API.
+**Verification**: typecheck + 29/29 + E2E smoke via API.
 
 **Commits**: `4236adf` (feat), `003a915` (docs).
 
 ---
 
-## Fase 6 — Cerrar el círculo en la conversación
+## Phase 6 — Closing the loop in the conversation
 
-**Contexto**: nueva prueba real del usuario: confirmó desde el panel, la transferencia se ejecutó (verificado en DB: aprobación consumida + intent completed), pero **el chat seguía diciendo "has not been sent"** y no había recibo ni forma de confirmar desde el chat.
+**Context**: new real test by the user: he confirmed from the panel, the transfer executed (verified in the DB: approval consumed + intent completed), but **the chat kept saying "has not been sent"** and there was no receipt and no way to confirm from the chat.
 
-**Implementación**:
-- `GET /api/conversations/:id` devuelve `pendingApprovals` de esa conversación.
-- Al confirmar, el backend añade **un** mensaje de recibo al hilo, construido solo con hechos verificados (monto, concepto, reference del banco + etiquetas de cuentas resueltas del banco, con fallback a ids; nada se añade si el resultado no es `completed`).
-- El chat muestra la tarjeta de confirmación dentro de la conversación (mismo estado e intervalo compartidos) y recarga el hilo tras confirmar.
+**Implementation**:
+- `GET /api/conversations/:id` returns that conversation's `pendingApprovals`.
+- On confirm, the backend adds **one** receipt message to the thread, built only from verified facts (amount, concept, bank reference + account labels resolved from the bank, with fallback to ids; nothing is added if the outcome is not `completed`).
+- The chat shows the confirmation card inside the conversation (same state and interval shared) and reloads the thread after confirming.
 
-**Verificación propia (asistente)**: ciclo completo por API — propuesta → `pendingApprovals` en la conversación → confirm `completed` (reference `b229adea…`) → último mensaje del asistente: *"Transfer completed: EUR 2.50 from your Aurora account to Bruno Vidal's Horizon account (concept: parent check). Reference: b229adea-…"* → segundo confirm 409 con **un solo** mensaje en el hilo. `npm test` 32/32.
+**Own verification (assistant)**: full cycle via API — proposal → `pendingApprovals` in the conversation → confirm `completed` (reference `b229adea…`) → last assistant message: *"Transfer completed: EUR 2.50 from your Aurora account to Bruno Vidal's Horizon account (concept: parent check). Reference: b229adea-…"* → second confirm 409 with **a single** message in the thread. `npm test` 32/32.
 
 **Commits**: `c730b02` (feat), `8d2dc1a` (docs).
 
 ---
 
-## Fase 7 — "Discard" cancela de verdad (completada)
+## Phase 7 — "Discard" really cancels (completed)
 
-**Contexto**: el usuario reportó que al pulsar Discard la propuesta seguía apareciendo para confirmar, además fuera de la conversación.
+**Context**: the user reported that when pressing Discard the proposal kept appearing for confirmation, and moreover outside the conversation.
 
-**Causa raíz**: `Discard` era cosmético (ocultaba la tarjeta localmente); la propuesta seguía viva en el servidor, y la tabla `approvals` no tenía estado de cancelación (solo `expires_at`/`consumed_at`), ni `src/db.ts` tenía migraciones.
+**Root cause**: `Discard` was cosmetic (it hid the card locally); the proposal stayed alive on the server, and the `approvals` table had no cancellation state (only `expires_at`/`consumed_at`), nor did `src/db.ts` have migrations.
 
-**Implementación delegada**: columna `cancelled_at` con migración idempotente (`PRAGMA table_info` + `ALTER TABLE`); endpoint `POST /api/approvals/:id/cancel` con cancelación atómica e idempotente (409 si ya fue confirmada); filtros `cancelled_at IS NULL` en dashboard, `pendingApprovals` y confirm; gate en `authorizeTransfer`; UI que cancela, avisa ("Proposal discarded. The transfer was not sent.") y refresca; tests de cancelación (desaparece de ambos lados, confirm posterior sin POST al banco, doble cancel idempotente, cancelación ajena 404).
+**Delegated implementation**: `cancelled_at` column with an idempotent migration (`PRAGMA table_info` + guarded `ALTER TABLE`); endpoint `POST /api/approvals/:id/cancel` with atomic, idempotent cancellation (409 if it was already confirmed); `cancelled_at IS NULL` filters in dashboard, `pendingApprovals` and confirm; gate in `authorizeTransfer`; UI that cancels, warns ("Proposal discarded. The transfer was not sent.") and refreshes; cancellation tests (disappears on both sides, later confirm without POST to the bank, double cancel idempotent, cancelling someone else's 404).
 
 ---
 
-## Fase 8 — El descarte también queda registrado en la conversación
+## Phase 8 — The discard is also recorded in the conversation
 
-**Contexto**: el usuario señaló que, si al confirmar aparece un recibo en el chat, al descartar debería aparecer también un mensaje ("en el chat debería aparecer un mensaje como aparece en transfers").
+**Context**: the user pointed out that, if confirming produces a receipt in the chat, discarding should also produce a message ("en el chat debería aparecer un mensaje como aparece en transfers").
 
-**Implementación**: `cancellationContent` construido **solo con el payload almacenado** (una propuesta cancelada no tiene operación bancaria, así que no se afirma ninguna) y resolvedor de etiquetas compartido con el recibo (`transferLabels`, fallback a ids, nunca inventado). El mensaje se añade **exactamente una vez**: solo tras el `UPDATE` guardado exitoso (`changes === 1`), solo si el intent tiene conversación, nunca en 404/409 ni en el re-cancel idempotente; el INSERT va envuelto para que un fallo de mensaje jamás rompa la cancelación.
+**Implementation**: `cancellationContent` built **only from the stored payload** (a cancelled proposal has no bank operation, so none is claimed) and a label resolver shared with the receipt (`transferLabels`, fallback to ids, never invented). The message is added **exactly once**: only after the guarded `UPDATE` succeeds (`changes === 1`), only if the intent has a conversation, never on 404/409 nor on the idempotent re-cancel; the INSERT is wrapped so a message failure can never break the cancellation.
 
-**Verificación**: 3 tests nuevos con TDD (RED observado) → **40/40**; en vivo: doble cancel → **un solo** mensaje *"Transfer cancelled: EUR 4.50 from your Aurora account to Bruno Vidal's Horizon account (concept: parent cancel msg) was not sent. No money has moved."* y `pendingApprovals` a 0.
+**Verification**: 3 new TDD tests (RED observed) → **40/40**; live: double cancel → **a single** message *"Transfer cancelled: EUR 4.50 from your Aurora account to Bruno Vidal's Horizon account (concept: parent cancel msg) was not sent. No money has moved."* and `pendingApprovals` at 0.
 
-## Fase 9 — El agente prometía una confirmación que no creaba
+## Phase 9 — The agent promised a confirmation it never created
 
-**Contexto**: el usuario reportó que al pedir una transferencia ya no aparecía la tarjeta. Diagnóstico (inicialmente con el observable equivocado, corregido después): en la conversación `d36672a7` la tabla `events` muestra **solo `list_accounts`** — cero eventos `transfer_money`, cero intents. El modelo respondió en prosa (*"I can send €1.00… Please confirm these details before I proceed"*) sin llamar a la herramienta, así que no existía propuesta y no había tarjeta. Causa: la reescritura evidencia-first explicaba qué hacer **después** de `requires_confirmation`, pero no exigía **crearla**.
+**Context**: the user reported that the card no longer appeared when requesting a transfer. Diagnosis (initially with the wrong observable, corrected afterwards): in conversation `d36672a7` the `events` table shows **only `list_accounts`** — zero `transfer_money` events, zero intents. The model answered in prose (*"I can send €1.00… Please confirm these details before I proceed"*) without calling the tool, so no proposal existed and there was no card. Cause: the evidence-first rewrite explained what to do **after** `requires_confirmation`, but did not require **creating it**.
 
-**Corrección de método importante**: el asistente había citado como evidencia "no hubo `POST /api/actions`" — pero ese endpoint es el del **formulario manual**; las tool calls del agente ocurren in-process dentro de `sendMessage` y no generan HTTP. El observable correcto es la tabla `events` (telemetría `tool.started`/`tool.completed`). Lección registrada: verificar el canal real de la evidencia antes de afirmar la causa.
+**Important method correction**: the assistant had cited as evidence "there was no `POST /api/actions`" — but that endpoint belongs to the **manual form**; the agent's tool calls happen in-process inside `sendMessage` and generate no HTTP. The correct observable is the `events` table (telemetry `tool.started`/`tool.completed`). Lesson recorded: verify the real channel of the evidence before asserting the cause.
 
-**Arreglo**: reglas imperativas en `prompt.ts` (llamar a `transfer_money` en el mismo turno cuando monto/origen/destino se conocen; prohibido presentar un resumen en prosa como propuesta; preguntar solo si falta un dato real; `requires_confirmation` = no enviada y la tarjeta aparece del resultado del tool; citas solo para documentación) + una línea en el suffix de `run.ts`.
+**Fix**: imperative rules in `prompt.ts` (call `transfer_money` in the same turn when amount/source/destination are known; presenting a prose summary as a proposal is forbidden; ask only if a real piece of data is missing; `requires_confirmation` = not sent and the card appears from the tool result; citations only for documentation) + one line in the `run.ts` suffix.
 
-**Verificación propia (observable = `events`)**: petición completa → `list_accounts` → `transfer_money` → `requires_confirmation` con `approvalId`, 1 intent, `pendingApprovals` = 1 en la conversación, y respuesta que guía a la tarjeta. Worker: 2/2 en peticiones completas, 2/3 preguntando la cuenta cuando es ambigua (y siempre creando la propuesta en el turno siguiente). **40/40 tests.**
+**Own verification (observable = `events`)**: complete request → `list_accounts` → `transfer_money` → `requires_confirmation` with `approvalId`, 1 intent, `pendingApprovals` = 1 in the conversation, and an answer that points to the card. Worker: 2/2 on complete requests, 2/3 when asking about the account when ambiguous (and always creating the proposal on the next turn). **40/40 tests.**
 
-## Fase 10 — Una sola propuesta pendiente por conversación (y fin del panel duplicado)
+## Phase 10 — A single pending proposal per conversation (and end of the duplicate panel)
 
-**Contexto**: el usuario reportó propuestas en el panel que no correspondían a su conversación. Diagnóstico: **restos de smoke tests** (del asistente y del worker) sobre el mismo usuario Lucía — 4 propuestas pendientes huérfanas. Limpieza vía API (0 pendientes) + eliminación de 4 conversaciones vacías de prueba.
+**Context**: the user reported proposals in the panel that did not belong to his conversation. Diagnosis: **leftovers from smoke tests** (by the assistant and the worker) against the same user Lucía — 4 orphan pending proposals. Cleanup via the API (0 pending) + removal of 4 empty test conversations.
 
-**Dos causas de fondo corregidas**:
-1. **Acumulación**: cada turno del agente crea un intent nuevo → propuesta nueva; los reintentos se apilaban. Ahora: petición idéntica en la misma conversación → **reutiliza** la propuesta (mismo `approvalId`, sin fila nueva); petición distinta → **supersede** las anteriores de esa conversación con un UPDATE directo (silencio: no es un descarte del usuario, no debe generar mensaje). El UPDATE se acota con `intent_id IN (SELECT id FROM intents WHERE conversation_id=?)`, de modo que otras conversaciones y las propuestas sin conversación quedan intactas.
-2. **Panel duplicado**: el panel de propuestas se renderizaba también bajo el chat. Ahora solo en Overview; el chat usa su tarjeta inline (una por propuesta pendiente).
+**Two underlying causes fixed**:
+1. **Accumulation**: every agent turn creates a new intent → new proposal; retries piled up. Now: an identical request in the same conversation → **reuses** the proposal (same `approvalId`, no new row); a different request → **supersedes** the previous ones of that conversation with a direct UPDATE (silently: it is not a user discard, it must not generate a message). The UPDATE is scoped with `intent_id IN (SELECT id FROM intents WHERE conversation_id=?)`, so other conversations and proposals without a conversation remain intact.
+2. **Duplicate panel**: the proposals panel was also rendered under the chat. Now only in Overview; the chat uses its inline card (one per pending proposal).
 
-**Verificación en vivo (asistente)**: A(100c) → B(200c) supersede A y confirmar A da 409 → C(200c idéntica a B) reutiliza el mismo `approvalId`; conversación y dashboard muestran exactamente 1. 4 tests nuevos (**44/44**).
+**Live verification (assistant)**: A(100c) → B(200c) supersedes A and confirming A gives 409 → C(200c identical to B) reuses the same `approvalId`; conversation and dashboard show exactly 1. 4 new tests (**44/44**).
 
-**Lección de método registrada**: los smoke tests no deben contaminar los datos de demo; hay que limpiar las propuestas pendientes al terminar cada verificación (y evitar dejar conversaciones vacías).
+**Method lesson recorded**: smoke tests must not pollute the demo data; pending proposals must be cleaned up after every verification (and empty conversations should not be left behind).
 
-## Fase 11 — Medición antes/después (eval de respuestas) y evidencia del starter
+## Phase 11 — Before/after measurement (answer eval) and starter evidence
 
-**Trabajo**: (1) mapa explícito **cláusula de `contracts.md` → bug → reproducción → arreglo → verificación** en el work-log, incluyendo las dos cláusulas que ya se cumplían (verificadas para descartarlas); (2) documentación de los **casos sembrados** del starter como evidencia propia, verificados en vivo; (3) **eval medido** con `scripts/eval-answers.ts` (7 preguntas con verdad de referencia y trampa de valores prohibidos, 2 repeticiones por lado, base `db0bdf5` en puertos 3010/4011 vía worktree desechable).
+**Work**: (1) explicit map **clause of `contracts.md` → bug → reproduction → fix → verification** in the work-log, including the two clauses that were already satisfied (verified in order to rule them out); (2) documentation of the starter's **seeded cases** as evidence of its own, verified live; (3) **measured eval** with `scripts/eval-answers.ts` (7 questions with ground truth and a trap of forbidden values, 2 repetitions per side, base `db0bdf5` on ports 3010/4011 via a disposable worktree).
 
-**Resultado**: BEFORE 1/14 pasan y 0/14 citan; AFTER **14/14 pasan y 12/12 de las citas exigidas**. Lectura honesta: el delta es **trazabilidad**, no acierto factual (el base acertó los hechos en las 14 respuestas). Ninguna de las 28 respuestas inventó cifras.
+**Result**: BEFORE 1/14 pass and 0/14 cite; AFTER **14/14 pass and 12/12 of the required citations**. Honest reading: the delta is **traceability**, not factual accuracy (the base got the facts right in all 14 answers). None of the 28 answers invented figures.
 
-**Verificación de los casos sembrados (en vivo, after)**: Elena ya no responde "Transfer completed" ante una pregunta informativa (explica qué revisar y aclara que no ha enviado nada, con 0 propuestas creadas); Inés ya no inventa "EUR 30" por referidos (admite que no hay documentación aplicable y ofrece dos siguientes pasos).
+**Verification of the seeded cases (live, after)**: Elena no longer answers "Transfer completed" to an informational question (she explains what to review and clarifies that nothing has been sent, with 0 proposals created); Inés no longer invents "EUR 30" for referrals (she admits there is no applicable documentation and offers two next steps).
 
-**Límites declarados**: el instrumento puntúa por presencia/ausencia de cifras (posible falso negativo ante respuestas comparativas; sesgo en contra de nuestra medición); y el arreglo no recupera valores archivados para preguntas históricas — verificado que en ese caso admite el hueco y ofrece soporte, sin inventar.
+**Declared limits**: the instrument scores by presence/absence of figures (possible false negative with comparative answers; bias against our measurement); and the fix does not retrieve archived values for historical questions — verified that in that case it admits the gap and offers support, without inventing.
 
-## Decisiones transversales y su porqué
+## Cross-cutting decisions and their rationale
 
-| Decisión | Porqué |
+| Decision | Why |
 |---|---|
-Stackear ramas en vez de ramificar siempre de `dev` | Los archivos de submission (`work-log.md`, `ai-sessions/`, `odd/`) son compartidos y el usuario no podía mergear; apilar evita conflictos garantizados |
-Todo el trabajo va por subagentes con specs cerradas y superficies de edición permitidas | Delegación obligatoria del harness; además permite revisar diffs pequeños por unidad de trabajo |
-Un commit de work-unit por cambio de comportamiento, con tests y docs en el mismo commit | Revisabilidad y trazabilidad para la evaluación |
-Evidencia before/after con scripts reproducibles | El challenge valora "comprobaciones reproducibles before/after" |
-`gaps` honestos y nunca inventar | Contrato explícito del challenge |
-Arreglar los bugs que la infraestructura dormida insinuaba (aprobaciones, operador, telemetría) | El starter construye infraestructura desconectada a propósito: conectarla es exactamente el trabajo esperado |
+Stacking branches instead of always branching from `dev` | The submission files (`work-log.md`, `ai-sessions/`, `odd/`) are shared and the user could not merge; stacking avoids guaranteed conflicts |
+All work goes through subagents with closed specs and allowed edit surfaces | Mandatory harness delegation; it also allows reviewing small diffs per work unit |
+One work-unit commit per behavior change, with tests and docs in the same commit | Reviewability and traceability for the evaluation |
+Before/after evidence with reproducible scripts | The challenge values "reproducible before/after checks" |
+Honest `gaps` and never invent | Explicit challenge contract |
+Fixing the bugs the dormant infrastructure hinted at (approvals, operator, telemetry) | The starter builds disconnected infrastructure on purpose: connecting it is exactly the expected work |
 
-## Pendientes al cierre de esta entrada
+## Pending items at the close of this entry
 
-1. ~~Verificar y commitear la Fase 7 (cancelación real del Discard)~~ — hecho: `npm test` 37/37, cancelación verificada en vivo (desaparece de chat+dashboard, confirm posterior 409 sin débito), commit `fcd0405`.
-2. Revisar la UI completa con el usuario y aplicar mejoras de layout si hacen falta.
-3. Grabar el video (guión de 6 pasos en `submission/work-log.md` §4) — el guión debería incluir ahora el descarte registrado en el chat.
-4. Mergear la cadena de ramas a `dev` en orden y empaquetar el ZIP de entrega.
+1. ~~Verify and commit Phase 7 (real Discard cancellation)~~ — done: `npm test` 37/37, cancellation verified live (disappears from chat+dashboard, later confirm 409 without debit), commit `fcd0405`.
+2. Review the full UI with the user and apply layout improvements if needed.
+3. Record the video (6-step script in `submission/work-log.md` §4) — the script should now include the discard recorded in the chat.
+4. Merge the branch chain to `dev` in order and package the submission ZIP.

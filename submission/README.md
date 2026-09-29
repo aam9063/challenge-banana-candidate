@@ -11,8 +11,9 @@
 | `EXPLANATION.md` | Full written explanation of both parts: problems, root causes, fixes, evidence, method, verification, limitations, guided demo. **This is the document to read first** (also delivered as PDF). |
 | `work-log.md` | Chronological engineering log, unit by unit: contract clause → defect → reproduction → fix → before/after verification. Includes the video script used for the demo recording. |
 | `ai-sessions/README.md` | Index of the AI session exports. |
-| `ai-sessions/session-01-setup-y-diagnostico.md` | Session 1: dependency-installation diagnosis (native module build toolchain), environment setup, first-run walkthrough, initial code map. |
-| `ai-sessions/session-02-implementacion-y-pulido.md` | Session 2: the complete implementation, phases 0–13 — four defect families, the Trust Layer, the Fee Coach, UX iterations driven by real user feedback, the measurement, and the environment hardening. |
+| `ai-sessions/session-01-setup-and-diagnosis.md` | Session 1: dependency-installation diagnosis (native module build toolchain), environment setup, first-run walkthrough, initial code map. |
+| `ai-sessions/session-02-implementation-and-polish.md` | Session 2 (28-09-2026): Part 1 (four defect families and operator visibility), the Trust Layer, UX iterations driven by real user feedback, and the measured before/after evaluation (phases 0–11). |
+| `ai-sessions/session-03-pending-items-and-fee-coach.md` | Session 3 (29-09-2026): the deterministic fee coach, the environment hardening, the delivery documentation, and the closure of the declared pending items (phases 1–5). |
 | `evidence/eval-before-r2.json` | Raw evaluation results on the base commit (7 ground-truth questions × 2 repetitions). |
 | `evidence/eval-after-r2.json` | Raw evaluation results on the fixed branch, same protocol. |
 | `evidence/eval-before.json`, `evidence/eval-after.json` | First evaluation round (4 questions, single repetition). |

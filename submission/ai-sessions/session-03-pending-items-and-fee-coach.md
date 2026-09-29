@@ -1,84 +1,83 @@
-# Sesión 03 — Pendientes declarados, Coach de comisiones y calidad de recuperación
+# Session 03 — Declared pending items, Fee Coach and retrieval quality
 
-- **Fecha**: 29 de septiembre de 2026
-- **Herramienta**: pi coding agent (harness), sesión del host principal + subagentes (workers de implementación)
-- **Idioma**: conversación en castellano; artefactos de código en inglés
+- **Date**: 29 September 2026
+- **Tool**: pi coding agent (harness), main host session + subagents (implementation workers)
+- **Language**: conversation in Spanish; code artifacts in English
 
-> **Nota de método**: a partir de esta sesión, cada **sesión de trabajo** tiene su propio archivo (antes, el trabajo de varios días se agrupaba en un solo archivo por fases). `session-02` cubre el 28-09 (fases 0–11); este archivo cubre el 29-09.
+> **Method note**: from this session on, every **work session** has its own file (before, the work of several days was grouped into a single file by phases). `session-02` covers 28-09 (phases 0–11); this file covers 29-09.
 
 ---
 
-## Mensajes del usuario en esta sesión
+## User messages in this session
 
 1. "Vamos a continuar por donde lo dejamos."
 2. "levanta el proyecto para que compruebe el estado"
 3. "No, si no has terminado, termina"
 4. "Está todo correcto"
-5. "como que los comandos exactos?" *(aclaración: el ZIP lo descarga del repositorio; pide además un documento para PDF)*
+5. "como que los comandos exactos?" *(clarification: the ZIP is downloaded from the repository; he also asks for a document for PDF)*
 6. "El zip lo descargo yo de github y ya viene sin los node modules ni el .env ni nada. Y lo del pdf tambien lo quiero. Arma un buen md explicando todo (a parte del video que voy a hacer) y lo convierto a pdf y lo incluyo"
-7. *(reporte de estado del repositorio y pedido de completar los pendientes declarados: `intentId` por envío del formulario, chunking por secciones y prefijo de producto al embeber, recuperación histórica, y los hallazgos menores — señal al agotar las 7 rondas del agente, `bankRequest` con respuesta no-JSON, `/api/people` sin sesión)*
+7. *(status report of the repository and request to complete the declared pending items: `intentId` per form submission, section-based chunking and product prefix when embedding, historical retrieval, and the minor findings — signal when the agent's 7 rounds are exhausted, `bankRequest` with a non-JSON response, `/api/people` without a session)*
 
 ---
 
-## Fase 1 — Coach de comisiones: motor determinista sobre el ledger
+## Phase 1 — Fee Coach: deterministic engine over the ledger
 
-**Decisión de diseño**: se eligió el **coach de comisiones** como extensión de la Parte 2 por ser la propuesta más distintiva y por combinar ledger + RAG + honestidad, con la decisión tomada por **código puro y testeable** en lugar del modelo.
+**Design decision**: the **fee coach** was chosen as the Part 2 extension because it was the most distinctive proposal and because it combines ledger + RAG + honesty, with the decision made by **pure, testable code** instead of the model.
 
-**Trabajo**: `src/banking/feePolicy.ts` (motor puro: producto desde la etiqueta de la cuenta, documento vigente del índice con los `archive-*` excluidos, comisión y regla de exención **parseadas del texto del documento**, condiciones evaluadas contra los movimientos del mes, caveats honestos sobre la ausencia de estado de liquidación en el ledger), tool `fee_status` (identidad del servidor), guía de prompt (el modelo presenta, nunca calcula) y 8 tests nuevos.
+**Work**: `src/banking/feePolicy.ts` (pure engine: product from the account label, in-force document from the index with the `archive-*` excluded, fee and waiver rule **parsed from the document text**, conditions evaluated against the month's movements, honest caveats about the absence of settlement status in the ledger), `fee_status` tool (server identity), prompt guide (the model presents, it never calculates) and 8 new tests.
 
-**Verificación**: 52/52 tests, incluido el parseo de los cinco documentos reales (Aurora 6 · Horizon 3 · Cloud 0 · Community 2 · Family 5) y que el archivado (EUR 8) nunca se selecciona; en vivo con el modelo real, Lucía obtiene **EUR 0** con ambas condiciones cumplidas y cita `[aurora-fees-2026 v2]`, y su cuenta de ahorro da `undetermined` sin cifra inventada.
+**Verification**: 52/52 tests, including the parsing of the five real documents (Aurora 6 · Horizon 3 · Cloud 0 · Community 2 · Family 5) and that the archived one (EUR 8) is never selected; live with the real model, Lucía gets **EUR 0** with both conditions met and citation `[aurora-fees-2026 v2]`, and her savings account returns `undetermined` with no invented figure.
 
-**Corrección detectada en revisión del padre**: en la primera pasada el modelo adjuntó la cita de Aurora al caveat de la cuenta sin política (cita mal atribuida). Se endureció la guía (la cita solo acompaña a la afirmación que respalda) y se re-verificó: la respuesta de ahorros ya no cita política alguna.
+**Correction detected in the parent's review**: on a first pass the model attached the Aurora citation to the savings account's caveat (misattributed citation). The guide was tightened (a citation may only accompany the claim it supports) and it was re-verified: the savings answer no longer cites any policy.
 
-**Límites declarados**: parseo tolerante al corpus actual (ante reformulaciones cae en `undetermined`, con test que lo fija), mes evaluado derivado de la fecha de referencia y ventana de 100 movimientos de `/v1/movements`.
+**Declared limits**: parsing tolerant to the current corpus (faced with rephrasings it falls back to `undetermined`, with a test that pins it), evaluated month derived from the reference date and the 100-movement window of `/v1/movements`.
 
-## Fase 2 — Endurecimiento de la configuración de entorno
+## Phase 2 — Environment configuration hardening
 
-**Contexto**: el fallo que bloqueó el proyecto el primer día (el `OPENAI_API_KEY=` **vacío** que `setup.ts` escribía en `.env.local`, que tapaba la key real de `.env` porque `config.ts` carga `.env.local` primero y dotenv no pisa variables ya definidas) se había diagnosticado y resuelto en la máquina, pero **no estaba corregido en el código**. Cualquier persona que clonara la entrega y configurara la key por la vía natural (`.env` o variable de entorno) habría chocado con el mismo error confuso en su primer `npm run doctor`.
+**Context**: the failure that blocked the project on day one (the **empty** `OPENAI_API_KEY=` that `setup.ts` wrote into `.env.local`, which masked the real key from `.env` because `config.ts` loads `.env.local` first and dotenv does not override already-defined variables) had been diagnosed and resolved on the machine, but **it was not fixed in the code**. Anyone cloning the submission and configuring the key through the natural route (`.env` or an environment variable) would have hit the same confusing error on their first `npm run doctor`.
 
-**Trabajo** (rama `fix/env-precedence`, desde `dev`): `scripts/setup.ts` ahora escribe `.env.local` a partir del ejemplo con la línea `OPENAI_API_KEY` **comentada**, de modo que la key puede venir de `.env.local`, de `.env` o del entorno sin que un valor vacío la tape; y `README.md` documenta la regla de precedencia y la trampa.
+**Work** (branch `fix/env-precedence`, from `dev`): `scripts/setup.ts` now writes `.env.local` from the example with the `OPENAI_API_KEY` line **commented out**, so the key can come from `.env.local`, from `.env` or from the environment without an empty value masking it; and `README.md` documents the precedence rule and the trap.
 
-**Verificación**: se borró `.env.local`, se ejecutó `npm run setup` y se comprobó que el archivo generado contiene `# OPENAI_API_KEY=`; el `.env.local` original se restauró **byte-idéntico** (verificado con `diff`). `npm run typecheck` y `npm test` (44/44 en esa rama) en verde.
+**Verification**: `.env.local` was deleted, `npm run setup` was run and the generated file was confirmed to contain `# OPENAI_API_KEY=`; the original `.env.local` was restored **byte-identical** (verified with `diff`). `npm run typecheck` and `npm test` (44/44 on that branch) green.
 
-**Nota de método**: se eligió una rama propia desde `dev` en vez de colarlo en la rama del fee coach, para no mezclar un arreglo de entorno con una feature de producto.
+**Method note**: a dedicated branch from `dev` was chosen instead of squeezing it into the fee coach branch, to avoid mixing an environment fix with a product feature.
 
-## Fase 3 — Documentación de entrega
+## Phase 3 — Submission documentation
 
-**Contexto**: el brief pide explicar el trabajo y listar los materiales incluidos, y el usuario además quiere un documento para convertir a PDF e incluir en la entrega.
+**Context**: the brief asks to explain the work and list the included materials, and the user additionally wants a document to convert to PDF and include in the submission.
 
-**Trabajo**:
-- `submission/EXPLANATION.md` (276 líneas, en inglés por ser el idioma del evaluador): resumen y scorecard, quick start con la trampa de precedencia de `.env`, cada familia de defectos mapeada a su cláusula de `contracts.md` con causa raíz, commit del arreglo y evidencia antes/después, la evidencia sembrada del propio starter, la Trust Layer y el Coach de comisiones, el método de trabajo, una tabla *afirmación → cómo reproducirla*, la medición con su lectura honesta y el sesgo del instrumento, los límites declarados, una demo guiada de 5 minutos y el mapa de ramas/commits/archivos.
-- `submission/README.md`: inventario de entrega con rutas relativas de todo lo incluido, archivos del proyecto que llevan el trabajo, exclusiones y lo que falta (el video).
-- `submission/VIDEO-SCRIPT.md`: guion de grabación en castellano, con tiempos, comandos exactos, prompts a escribir y salidas esperadas; incluye el checklist previo a subir el video.
+**Work**:
+- `submission/EXPLANATION.md` (276 lines, in English as the evaluator's language): summary and scorecard, quick start with the `.env` precedence trap, each defect family mapped to its `contracts.md` clause with root cause, fix commit and before/after evidence, the starter's own seeded evidence, the Trust Layer and the Fee Coach, the working method, a *claim → how to reproduce it* table, the measurement with its honest reading and the instrument's bias, the declared limits, a guided 5-minute demo and the branch/commit/file map.
+- `submission/README.md`: submission inventory with relative paths of everything included, project files that carry the work, exclusions and what is missing (the video).
+- `submission/VIDEO-SCRIPT.md`: recording script in Spanish, with timings, exact commands, prompts to type and expected outputs; it includes the pre-upload checklist.
 
-**Decisión de idioma**: la documentación que lee el evaluador (`EXPLANATION.md`, `README.md`) va en inglés; el guion del video va en castellano porque es lo que se dice en cámara.
+**Language decision**: the documentation the evaluator reads (`EXPLANATION.md`, `README.md`) is in English; the video script is in Spanish because it is what is spoken on camera.
 
-**Pendiente al escribir esta fase**: los pendientes declarados de la sesión (ver Fase 4 y 5).
+**Pending at the time of writing this phase**: the session's declared pending items (see Phases 4 and 5).
 
-## Fase 4 — Cierre de pendientes declarados (bloque 1)
+## Phase 4 — Closing the declared pending items (block 1)
 
-**Alcance** (rama `fix/form-intent-and-minors`, desde `master`):
+**Scope** (branch `fix/form-intent-and-minors`, from `master`):
 
-1. **`intentId` por envío del formulario**: el formulario de transferencia mantiene la identidad de su envío (misma firma de payload → mismo `intentId`) y la envía al endpoint; en el servidor, el camino sin conversación reutiliza una propuesta pendiente idéntica del mismo usuario. Resultado: un doble clic no crea dos propuestas.
-2. **Señal al agotar las rondas del agente**: cuando el bucle termina con llamadas de herramienta pendientes, se registra un evento de telemetría y la respuesta final explica que no se pudo completar el pedido y ofrece un siguiente paso concreto.
-3. **`bankRequest` con respuesta no-JSON**: se parsea de forma defensiva y se lanza un `BankError` con el estado real y un mensaje claro en lugar de un `SyntaxError` suelto.
-4. **`/api/people` sin sesión**: se mantiene público (el selector de personas debe funcionar antes de que exista sesión; es una comodidad del simulador local, no autenticación), pero ahora está **documentado en el código** y **fijado por un test**, para que sea una decisión explícita y no una omisión.
+1. **`intentId` per form submission**: the transfer form keeps the identity of its submission (same payload signature → same `intentId`) and sends it to the endpoint; on the server, the no-conversation path reuses an identical pending proposal from the same user. Result: a double click does not create two proposals.
+2. **Signal when the agent's rounds are exhausted**: when the loop ends with pending tool calls, a telemetry event is recorded and the final answer explains that the request could not be completed and offers a concrete next step.
+3. **`bankRequest` with a non-JSON response**: it is parsed defensively and a `BankError` is thrown with the real status and a clear message instead of a loose `SyntaxError`.
+4. **`/api/people` without a session**: it stays public (the people selector must work before a session exists; it is a convenience of the local simulator, not authentication), but it is now **documented in the code** and **pinned by a test**, so it is an explicit decision rather than an omission.
 
-**Verificación**: pendiente de cierre en esta misma sesión.
+**Verification**: pending closure within this same session.
 
-## Fase 5 — Calidad de recuperación y recuperación histórica
+## Phase 5 — Retrieval quality and historical retrieval
 
-**Alcance previsto** (rama propia desde `master`):
+**Planned scope** (dedicated branch from `master`):
 
-1. **Chunking por secciones**: dividir por encabezados `##` en lugar de ventanas fijas de 650 caracteres, con subdivisión cuando una sección es demasiado larga.
-2. **Prefijo de producto al embeber**: embeber `título · documentId · versión` junto al texto, sin ensuciar el texto que se muestra y cita (el boilerplate común a los 80 documentos hoy domina los embeddings).
-3. **Recuperación histórica**: clasificador determinista de intención histórica en la consulta que habilita incluir documentos vencidos, marcados como históricos y con la instrucción de declararlos como tales (hoy quedan fuera por completo).
+1. **Section-based chunking**: split by `##` headers instead of fixed 650-character windows, with sub-splitting when a section is too long.
+2. **Product prefix when embedding**: embed `title · documentId · version` alongside the text, without polluting the text that is displayed and cited (the boilerplate shared by the 80 documents currently dominates the embeddings).
+3. **Historical retrieval**: deterministic historical-intent classifier on the query that enables including expired documents, marked as historical and with the instruction to declare them as such (today they are excluded entirely).
 
-**Verificación prevista**: tests de chunking y de clasificación, búsqueda con y sin intención histórica, re-ingesta con `--export`, y **re-ejecución del eval** (`REPEATS=2`) para medir el efecto sobre precisión y citas.
+**Planned verification**: chunking and classification tests, search with and without historical intent, re-ingestion with `--export`, and **re-running the eval** (`REPEATS=2`) to measure the effect on precision and citations.
 
-## Pendientes al cierre de esta sesión
+## Pending items at the close of this session
 
-1. Cerrar la Fase 4 (verificación en vivo) y la Fase 5.
-2. Grabar el video siguiendo `VIDEO-SCRIPT.md`.
-3. Empaquetar el ZIP de entrega (descarga desde el repositorio) con el PDF y el video dentro de `submission/`.
-
+1. Close Phase 4 (live verification) and Phase 5.
+2. Record the video following `VIDEO-SCRIPT.md`.
+3. Package the submission ZIP (downloaded from the repository) with the PDF and the video inside `submission/`.

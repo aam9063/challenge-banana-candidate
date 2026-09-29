@@ -1,43 +1,43 @@
-# Sesión 01 — Setup, diagnóstico de instalación y análisis del challenge
+# Session 01 — Setup, installation diagnosis and challenge analysis
 
-- **Fecha**: 28 de septiembre de 2026
-- **Herramienta**: pi coding agent (harness), sesión del host principal
-- **Idioma**: conversación en castellano; proyecto en inglés
+- **Date**: 28 September 2026
+- **Tool**: pi coding agent (harness), main host session
+- **Language**: conversation in Spanish; project in English
 
-## Mensaje del usuario (1)
+## User message (1)
 
 > Vale a ver este es un proyecto para una hackaton. Quiero que vayas a fuego con ella, que te exprimas a más no poder. En la carpeta docs tienes challenge.md y contracts.md ahi tienes en que consiste el proyecto y que es lo que hay que hacer. Pero antes leete el readme e intenta instalar las dependencias porque a mi me da fallos y errores y a ver porque son. El proyecto es en inglés, pero tu me vas a responder en castellano. Creo que hay que adjuntar los archivos de las sesiones de IA para que vean como hemos trabajado con la IA para el desarrollo del proyecto, eso vas a empezar a guardarlo a partir de que tengamos todo el setup listo para poder empezar las implementaciones. Cuando consigas instalar dependencias explicame que es lo que hay que hacer y en que consiste el proyecto
 
-## Trabajo realizado (asistente)
+## Work performed (assistant)
 
-1. **Lectura del README.md y package.json**: proyecto Next.js 16 + React 19 + OpenAI (gpt-6-luna + text-embedding-3-small) + better-sqlite3. El README ya advierte un issue conocido en Windows con better-sqlite3 13.0.3.
-2. **Reproducción del fallo**: `npm ci` falla en Windows con Node 24.18.0. Error de `node-gyp`: encuentra VS 2022 y VS 2026 Community pero "missing any VC++ toolset". Cadena completa: (a) el instalador de better-sqlite3 intenta `prebuild-install` → 404 para ABI node-v137/win32-x64 en GitHub releases; (b) cae a `node-gyp rebuild`; (c) no hay compilador de C++ instalado.
-3. **Instalación parcial**: `npm install --ignore-scripts` instaló los 32 paquetes superiores sin problemas (solo fallaba el módulo nativo).
-4. **Solución aplicada**: instalación del workload `Microsoft.VisualStudio.Workload.NativeDesktop` (Desktop development with C++) sobre el VS 2022 Community existente, vía `setup.exe modify --quiet` con elevación UAC aprobada por el usuario. Verificado después con `vswhere -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64`.
-5. **Instalación completa**: `npm ci` → 0 vulnerabilidades, 0 errores. Verificado que `better-sqlite3` carga y ejecuta SQL correctamente. Nota: el paquete también incluye prebuilds embebidos en `prebuilds/`, pero el script de instalación sigue invocando node-gyp, de ahí el fallo original.
-6. **`npm run setup`**: creado `.env.local` (pendiente de completar `OPENAI_API_KEY`), bases de datos sembradas: 47 conversaciones, 17 casos de soporte, índice de embeddings precargado.
-7. **Verificación**: `npm run typecheck` OK, `npm test` → 13/13 tests pasan.
-8. **Lectura de docs/challenge.md y docs/contracts.md**: el challenge tiene 2 partes obligatorias (Parte 1: auditar y arreglar la app para el lanzamiento del lunes, 40%; Parte 2: feature distintiva del agente, 40%; método/verificación/handoff transversal, 20%). Entregable: ZIP único con proyecto + sesiones de IA completas (esta carpeta) + video de 5-10 min o PDF.
-9. **Mapeo del código** (subagente de exploración): mapa completo de src/agent, src/banking, app/api, src/retrieval, src/operator, src/telemetry y simulator/, con debilidades identificadas (ver siguiente mensaje del asistente en la sesión).
+1. **Reading of README.md and package.json**: Next.js 16 + React 19 + OpenAI (gpt-6-luna + text-embedding-3-small) + better-sqlite3 project. The README already warns about a known issue on Windows with better-sqlite3 13.0.3.
+2. **Reproduction of the failure**: `npm ci` fails on Windows with Node 24.18.0. `node-gyp` error: it finds VS 2022 and VS 2026 Community but "missing any VC++ toolset". Full chain: (a) the better-sqlite3 installer tries `prebuild-install` → 404 for ABI node-v137/win32-x64 on GitHub releases; (b) it falls back to `node-gyp rebuild`; (c) no C++ compiler is installed.
+3. **Partial installation**: `npm install --ignore-scripts` installed the 32 top-level packages without trouble (only the native module failed).
+4. **Solution applied**: installing the `Microsoft.VisualStudio.Workload.NativeDesktop` workload (Desktop development with C++) on top of the existing VS 2022 Community, via `setup.exe modify --quiet` with UAC elevation approved by the user. Verified afterwards with `vswhere -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64`.
+5. **Full installation**: `npm ci` → 0 vulnerabilities, 0 errors. Verified that `better-sqlite3` loads and runs SQL correctly. Note: the package also ships prebuilds embedded in `prebuilds/`, but the install script still invokes node-gyp, hence the original failure.
+6. **`npm run setup`**: created `.env.local` (`OPENAI_API_KEY` still to be filled in), seeded databases: 47 conversations, 17 support cases, preloaded embeddings index.
+7. **Verification**: `npm run typecheck` OK, `npm test` → 13/13 tests pass.
+8. **Reading of docs/challenge.md and docs/contracts.md**: the challenge has 2 mandatory parts (Part 1: audit and fix the app for Monday's launch, 40%; Part 2: distinctive agent feature, 40%; method/verification/handoff cross-cutting, 20%). Deliverable: single ZIP with project + complete AI sessions (this folder) + a 5-10 min video or a PDF.
+9. **Code mapping** (exploration subagent): full map of src/agent, src/banking, app/api, src/retrieval, src/operator, src/telemetry and simulator/, with identified weaknesses (see the next assistant message in the session).
 
-## Mensaje del usuario (2)
+## User message (2)
 
-> (Segunda petición, idéntica a la primera, reiterando: leer README, instalar dependencias, explicar el proyecto, y empezar a guardar las sesiones de IA desde que el setup esté listo.)
+> (Second request, identical to the first, reiterating: read the README, install the dependencies, explain the project, and start saving the AI sessions from the moment the setup is ready.)
 
-## Trabajo adicional (asistente)
+## Additional work (assistant)
 
-- Ejecutó la elección del usuario: lanzar en segundo plano la instalación del toolset de C++ con UAC.
-- Confirmó instalación del toolset, relanzó `npm ci` con éxito completo.
-- Confirmó setup + typecheck + tests 13/13.
-- Creó `submission/ai-sessions/` con este registro.
+- Executed the user's choice: launch the C++ toolset installation in the background with UAC.
+- Confirmed toolset installation, re-ran `npm ci` with full success.
+- Confirmed setup + typecheck + tests 13/13.
+- Created `submission/ai-sessions/` with this record.
 
-## Cierre del setup (continuación de esta sesión)
+## Setup closing (continuation of this session)
 
-- El usuario creó `.env` (git-ignorado) con la API key real. `npm run doctor` falló inicialmente: `scripts/setup.ts` había creado `.env.local` con `OPENAI_API_KEY=` vacío, y `src/config.ts` carga `.env.local` antes que `.env` (dotenv no pisa variables ya definidas), por lo que el valor vacío tapaba la key real. Fix: eliminar la línea vacía de `.env.local`. Doctor posterior: verde (`gpt-6-luna` responde, embeddings 1536 dims).
-- Convención de ramas definida por el usuario: las features salen de `dev` (no de master) y todo pasa por `dev` antes que `master`. Existe un worktree de Orca (`C:/Users/alber/orca/workspaces/challenge-banana-candidate/dev-2`, rama `dev-2`) que no se toca desde esta sesión.
-- `npm run dev` arrancado en segundo plano (log en `.data/dev.log`). Banco en 4001 (`{"ok":true}`) y app en 3000 (HTTP 200).
-- Walkthrough del README verificado end-to-end: Lucía ve 2 cuentas (Aurora 4.007,50 € + Ahorros 1.000,00 €), Marta ve 17 casos de soporte, y el chat respondió correctamente a "What accounts do I have?" con ambas cuentas y saldos exactos.
+- The user created `.env` (git-ignored) with the real API key. `npm run doctor` failed at first: `scripts/setup.ts` had created `.env.local` with an empty `OPENAI_API_KEY=`, and `src/config.ts` loads `.env.local` before `.env` (dotenv does not override already-defined variables), so the empty value was masking the real key. Fix: remove the empty line from `.env.local`. Doctor afterwards: green (`gpt-6-luna` responds, embeddings 1536 dims).
+- Branch convention defined by the user: features branch out of `dev` (not master) and everything goes through `dev` before `master`. There is an Orca worktree (`C:/Users/alber/orca/workspaces/challenge-banana-candidate/dev-2`, branch `dev-2`) that is not touched from this session.
+- `npm run dev` started in the background (log in `.data/dev.log`). Bank on 4001 (`{"ok":true}`) and app on 3000 (HTTP 200).
+- README walkthrough verified end-to-end: Lucía sees 2 accounts (Aurora 4.007,50 € + Savings 1.000,00 €), Marta sees 17 support cases, and the chat answered "What accounts do I have?" correctly with both accounts and exact balances.
 
-## Estado al cierre de esta entrada
+## State at the close of this entry
 
-Setup 100% operativo. Siguiente paso: Parte 1 — reproducir y priorizar los bugs detectados (doble débito en reintento con `npm run scenario -- intermittent 17`, replay de intents completadas, estado engañoso tras timeout, flujo de aprobaciones muerto, docs caducados en recuperación, vista de operador stub, telemetría lossy).
+Setup 100% operational. Next step: Part 1 — reproduce and prioritize the detected bugs (double debit on retry with `npm run scenario -- intermittent 17`, replay of completed intents, misleading status after timeout, dead approvals flow, expired docs in retrieval, stub operator view, lossy telemetry).

@@ -1,13 +1,13 @@
 # AI Session Log — Banana Bank Challenge
 
-> Registro de las sesiones de IA usadas para desarrollar este proyecto.
-> Herramienta: **pi** (coding agent harness, modelo GPT — ver cabecera de cada sesión).
-> Cada archivo es un volcado fiel de la conversación, mantenido a medida que avanza el trabajo.
+> Record of the AI sessions used to develop this project.
+> Tool: **pi** (coding agent harness, GPT model — see the header of each session).
+> Each file is a faithful dump of the conversation, kept up to date as the work progresses.
 
-## Sesiones
+## Sessions
 
-| Archivo | Tema | Estado |
+| File | Topic | Status |
 |---|---|---|
-| `session-01-setup-y-diagnostico.md` | Diagnóstico del fallo de instalación, análisis del challenge y mapeo del código | Cerrada |
-| `session-02-implementacion-y-pulido.md` | 28-09-2026 — Parte 1 (4 bugs + visibilidad de operador), Parte 2 (Trust Layer), pulido UX y medición antes/después (fases 0–11) | Cerrada |
-| `session-03-pendientes-y-fee-coach.md` | 29-09-2026 — Coach de comisiones, endurecimiento de entorno, documentación de entrega y cierre de pendientes declarados | En curso (se actualiza) |
+| `session-01-setup-and-diagnosis.md` | Diagnosis of the installation failure, challenge analysis and code mapping | Closed |
+| `session-02-implementation-and-polish.md` | 28-09-2026 — Part 1 (4 bugs + operator visibility), Part 2 (Trust Layer), UX polish and before/after measurement (phases 0–11) | Closed |
+| `session-03-pending-items-and-fee-coach.md` | 29-09-2026 — Fee Coach, environment hardening, submission documentation and closing of the declared pending items | In progress (updated as work continues) |
