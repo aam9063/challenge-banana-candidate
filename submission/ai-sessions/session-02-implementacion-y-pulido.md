@@ -204,7 +204,7 @@ DOUBLE DEBIT CONFIRMED: one €1.00 intention debited €3.00.
 
 ## Fase 12 — Parte 2 extendida: Coach de comisiones (motor determinista)
 
-**Decisión**: entre dos propuestas de extensión para la Parte 2 (coach de comisiones del cliente vs. resumen de caso del operador), se eligió el **coach de comisiones** por ser la más distintiva y por combinar ledger + RAG + honestidad, con la decisión tomada por **código puro y testeable** en lugar del modelo.
+**Decisión de diseño**: se eligió el **coach de comisiones** como extensión de la Parte 2 por ser la propuesta más distintiva y por combinar ledger + RAG + honestidad, con la decisión tomada por **código puro y testeable** en lugar del modelo.
 
 **Trabajo**: `src/banking/feePolicy.ts` (motor puro: producto desde la etiqueta de la cuenta, documento vigente del índice con los `archive-*` excluidos, comisión y regla de exención **parseadas del texto del documento**, condiciones evaluadas contra los movimientos del mes, caveats honestos sobre la ausencia de estado de liquidación en el ledger), tool `fee_status` (identidad del servidor), guía de prompt (el modelo presenta, nunca calcula) y 8 tests nuevos.
 
