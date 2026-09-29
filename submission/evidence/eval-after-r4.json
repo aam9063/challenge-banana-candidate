@@ -1,0 +1,344 @@
+{
+  "label": "after-r4",
+  "appUrl": "http://127.0.0.1:3000",
+  "repeats": 2,
+  "questions": [
+    {
+      "question": "What is the published monthly fee for the Aurora account?",
+      "criteria": {
+        "factHint": "states EUR 6 as the published Aurora monthly fee",
+        "forbiddenHint": "does NOT state EUR 8"
+      },
+      "runs": [
+        {
+          "answer": "The published Aurora monthly fee is EUR 6. It is waived to EUR 0 only if, in the same month, you receive a salary payment of at least EUR 1,200 and make three settled card purchases; if either condition is missing, the fee is EUR 6. [aurora-conditions-2026 v2]",
+          "citations": [
+            "[aurora-conditions-2026 v2]"
+          ],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": true
+          },
+          "pass": true
+        },
+        {
+          "answer": "The published Aurora monthly fee is EUR 6. It is waived to EUR 0 if, in the same month, you receive a salary payment of at least EUR 1,200 and make three settled card purchases; both conditions must be met. [aurora-fees-2026 v2]",
+          "citations": [
+            "[aurora-fees-2026 v2]"
+          ],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": true
+          },
+          "pass": true
+        }
+      ],
+      "passCount": 2,
+      "citedCount": 2,
+      "repeats": 2
+    },
+    {
+      "question": "Will I be charged a fee for my Aurora account this month?",
+      "criteria": {
+        "factHint": "states EUR 0 / that the waiver applies for this month",
+        "forbiddenHint": "does NOT state that this customer will be charged EUR 6"
+      },
+      "runs": [
+        {
+          "answer": "Your Aurora account’s September 2026 fee is **EUR 0**; both waiver conditions were met:\n\n- Salary of at least EUR 1,200: **Met** — a September salary payment of EUR 1,750.\n- At least three settled card purchases: **Met** — four card-like purchases were recorded.\n\nThe Aurora fee is waived when both conditions are met [aurora-fees-2026 v2].\n\n**Caveats:** Posted movements are treated as settled because the ledger does not record settlement status. Movements are counted by their September posting date, so postings near a month boundary may fall in an adjacent month.",
+          "citations": [
+            "[aurora-fees-2026 v2]"
+          ],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": true
+          },
+          "pass": true
+        },
+        {
+          "answer": "Your Aurora account’s fee for September 2026 is **EUR 0** [aurora-fees-2026 v2].\n\n- Salary of at least EUR 1,200: **met** — a EUR 1,750 salary payment was recorded.\n- At least three settled card purchases: **met** — four card-like purchases were recorded.\n\nCaveats: Posted movements are treated as settled because the ledger does not record settlement status. Movements posted near a month boundary may fall in an adjacent month.",
+          "citations": [
+            "[aurora-fees-2026 v2]"
+          ],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": true
+          },
+          "pass": true
+        }
+      ],
+      "passCount": 2,
+      "citedCount": 2,
+      "repeats": 2
+    },
+    {
+      "question": "What is the monthly fee of the Horizon account?",
+      "criteria": {
+        "factHint": "states EUR 3 as the Horizon monthly fee",
+        "forbiddenHint": "does NOT state EUR 6 or EUR 8 as the Horizon fee"
+      },
+      "runs": [
+        {
+          "answer": "The published monthly fee for Horizon is EUR 3 per calendar month [horizon-fees-2026 v2]. This is the published product fee; the fee check did not cover a Horizon account, so it has not determined a fee for your account.",
+          "citations": [
+            "[horizon-fees-2026 v2]"
+          ],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": true
+          },
+          "pass": true
+        },
+        {
+          "answer": "The fee check did not cover a Horizon account, so I can’t determine your personal fee from your account activity. The published monthly fee for the Horizon product is EUR 3 per calendar month [horizon-fees-2026 v2].",
+          "citations": [
+            "[horizon-fees-2026 v2]"
+          ],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": true
+          },
+          "pass": true
+        }
+      ],
+      "passCount": 2,
+      "citedCount": 2,
+      "repeats": 2
+    },
+    {
+      "question": "How much money do I get for referring a friend to the bank?",
+      "criteria": {
+        "factHint": "acknowledges the documentation does not specify a referral reward",
+        "forbiddenHint": "does NOT state a specific reward amount"
+      },
+      "runs": [
+        {
+          "answer": "I couldn’t find published documentation specifying a referral reward, so I can’t confirm how much you’d receive. You can check the Documents section in the app or ask me to open a support case for a team member to review it.",
+          "citations": [],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": false
+          },
+          "pass": true
+        },
+        {
+          "answer": "I couldn’t find any applicable documentation specifying a referral reward, so I can’t confirm an amount. Please check the Documents section in the app or contact human support for the latest offer.",
+          "citations": [],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": false
+          },
+          "pass": true
+        }
+      ],
+      "passCount": 2,
+      "citedCount": 0,
+      "repeats": 2
+    },
+    {
+      "question": "What is the maximum amount I can transfer in one operation?",
+      "criteria": {
+        "factHint": "states 100,000 (EUR 100,000) per operation"
+      },
+      "runs": [
+        {
+          "answer": "You can transfer up to EUR 100,000 in one operation, subject to available funds and authorization. Negative amounts and fractions smaller than one cent are not allowed [faq-limits v2].",
+          "citations": [
+            "[faq-limits v2]"
+          ],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": true
+          },
+          "pass": true
+        },
+        {
+          "answer": "A transfer can be up to EUR 100,000, subject to available funds and authorization. Negative amounts and fractions smaller than one cent are not allowed. [faq-limits v2]",
+          "citations": [
+            "[faq-limits v2]"
+          ],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": true
+          },
+          "pass": true
+        }
+      ],
+      "passCount": 2,
+      "citedCount": 2,
+      "repeats": 2
+    },
+    {
+      "question": "What is the monthly fee of the Cloud account?",
+      "criteria": {
+        "factHint": "states EUR 0 as the Cloud monthly fee",
+        "forbiddenHint": "does NOT state EUR 2, EUR 5 or EUR 6 as the Cloud fee"
+      },
+      "runs": [
+        {
+          "answer": "The published monthly fee for a Cloud account is **EUR 0** [cloud-fees-2026 v2].",
+          "citations": [
+            "[cloud-fees-2026 v2]"
+          ],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": true
+          },
+          "pass": true
+        },
+        {
+          "answer": "The published monthly fee for the Cloud account is **EUR 0** [faq-cloud-account v2].",
+          "citations": [
+            "[faq-cloud-account v2]"
+          ],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": true
+          },
+          "pass": true
+        }
+      ],
+      "passCount": 2,
+      "citedCount": 2,
+      "repeats": 2
+    },
+    {
+      "question": "What is the monthly fee of the Community account?",
+      "criteria": {
+        "factHint": "states EUR 2 as the Community monthly fee",
+        "forbiddenHint": "does NOT state EUR 0, EUR 5 or EUR 6 as the Community fee"
+      },
+      "runs": [
+        {
+          "answer": "The Community account’s monthly fee is EUR 2. [community-fees-2026 v2]",
+          "citations": [
+            "[community-fees-2026 v2]"
+          ],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": true
+          },
+          "pass": true
+        },
+        {
+          "answer": "The published monthly fee for a Community account is EUR 2 [community-fees-2026 v2].",
+          "citations": [
+            "[community-fees-2026 v2]"
+          ],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": true
+          },
+          "pass": true
+        }
+      ],
+      "passCount": 2,
+      "citedCount": 2,
+      "repeats": 2
+    },
+    {
+      "question": "What is the monthly fee of the Family account?",
+      "criteria": {
+        "factHint": "states EUR 5 as the Family monthly fee",
+        "forbiddenHint": "does NOT state EUR 0, EUR 2 or EUR 6 as the Family fee"
+      },
+      "runs": [
+        {
+          "answer": "The published monthly fee for a Family account is **EUR 5 per calendar month**. The Aurora salary waiver does not apply to Family. [family-fees-2026 v2]",
+          "citations": [
+            "[family-fees-2026 v2]"
+          ],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": true
+          },
+          "pass": true
+        },
+        {
+          "answer": "The published monthly fee for the Family account is EUR 5 per calendar month. This is the product fee, not a fee decision for one of your accounts. [family-fees-2026 v2]",
+          "citations": [
+            "[family-fees-2026 v2]"
+          ],
+          "criteria": {
+            "factCorrect": true,
+            "forbiddenAbsent": true,
+            "cited": true
+          },
+          "pass": true
+        }
+      ],
+      "passCount": 2,
+      "citedCount": 2,
+      "repeats": 2
+    }
+  ],
+  "total": 8,
+  "totalTurns": 16,
+  "passed": 16,
+  "cited": 14,
+  "perQuestion": [
+    {
+      "question": "What is the published monthly fee for the Aurora account?",
+      "passCount": 2,
+      "citedCount": 2,
+      "repeats": 2
+    },
+    {
+      "question": "Will I be charged a fee for my Aurora account this month?",
+      "passCount": 2,
+      "citedCount": 2,
+      "repeats": 2
+    },
+    {
+      "question": "What is the monthly fee of the Horizon account?",
+      "passCount": 2,
+      "citedCount": 2,
+      "repeats": 2
+    },
+    {
+      "question": "How much money do I get for referring a friend to the bank?",
+      "passCount": 2,
+      "citedCount": 0,
+      "repeats": 2
+    },
+    {
+      "question": "What is the maximum amount I can transfer in one operation?",
+      "passCount": 2,
+      "citedCount": 2,
+      "repeats": 2
+    },
+    {
+      "question": "What is the monthly fee of the Cloud account?",
+      "passCount": 2,
+      "citedCount": 2,
+      "repeats": 2
+    },
+    {
+      "question": "What is the monthly fee of the Community account?",
+      "passCount": 2,
+      "citedCount": 2,
+      "repeats": 2
+    },
+    {
+      "question": "What is the monthly fee of the Family account?",
+      "passCount": 2,
+      "citedCount": 2,
+      "repeats": 2
+    }
+  ]
+}

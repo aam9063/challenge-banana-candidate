@@ -4,7 +4,7 @@ import type { FunctionTool } from 'openai/resources/responses/responses';
 import { bankRequest } from '../banking/client';
 import { transferMoney } from '../banking/actions';
 import { evaluateFees } from '../banking/feePolicy';
-import { searchDocuments } from '../retrieval/search';
+import { searchDocuments, isHistoricalQuery } from '../retrieval/search';
 import { appDb } from '../db';
 import { recordEvent } from '../telemetry';
 import type { Account, BankMovement, ToolContext } from '../types';
@@ -26,7 +26,8 @@ export const toolDefinitions: FunctionTool[] = [
   {
     type: 'function',
     name: 'search_documents',
-    description: "Search the bank's documentation for policies and procedures.",
+    description:
+      "Search the bank's documentation for policies and procedures. For historical questions (before, previously, used to, a past year, ...) it also returns archived documents whose validity window has ended; their sources carry validFrom/validTo/version so the answer can label them as historical.",
     parameters: object({ query: string }),
     strict: true,
   },
@@ -77,13 +78,18 @@ export async function runTool(name: string, args: unknown, ctx: ToolContext): Pr
           contacts: await bankRequest(ctx.userId, '/v1/contacts'),
         };
         break;
-      case 'search_documents':
+      case 'search_documents': {
+        const { query } = z.object({ query: z.string().max(2000) }).parse(args);
+        // Historical questions also retrieve ended validity windows so the
+        // model can cite the archived value instead of reporting no
+        // documentation; the default stays in-force-only.
         result = {
-          sources: await searchDocuments(
-            z.object({ query: z.string().max(2000) }).parse(args).query,
-          ),
+          sources: await searchDocuments(query, undefined, undefined, {
+            includeExpired: isHistoricalQuery(query),
+          }),
         };
         break;
+      }
       case 'fee_status': {
         // Identity comes from the session server-side; tool arguments carry no
         // user id, so the customer can only ever see their own data.

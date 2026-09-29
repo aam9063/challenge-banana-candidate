@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { ResponseInputItem } from 'openai/resources/responses/responses';
 import { toResponseInputItems } from 'openai/lib/responses/ResponseInputItems';
 import { openai } from '../retrieval/embeddings';
-import { searchDocuments } from '../retrieval/search';
+import { searchDocuments, isHistoricalQuery } from '../retrieval/search';
 import { knowledgeInstructions } from './prompt';
 import { toolDefinitions, runTool } from './tools';
 import { appDb } from '../db';
@@ -46,7 +46,13 @@ export async function sendMessage(userId: string, conversationId: string, conten
     runId,
   );
   try {
-    const sources = await searchDocuments(content);
+    const sources = await searchDocuments(content, 'customer', 5, {
+      // The first pass honours historical intent, consistently with the
+      // search_documents tool: a genuinely historical question can see
+      // archived documents before the model decides to call tools, while
+      // non-historical queries keep the default in-force-only search.
+      includeExpired: isHistoricalQuery(content),
+    });
     const history = db
       .prepare(
         'SELECT role,content FROM messages WHERE conversation_id=? ORDER BY created_at,rowid',

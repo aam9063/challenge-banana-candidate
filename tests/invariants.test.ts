@@ -1,5 +1,6 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -16,11 +17,13 @@ const { seedApp } = await import('../src/seed');
 const { appDb, closeAppDb } = await import('../src/db');
 const { actor, sessionToken, sameOrigin, HttpError } = await import('../src/auth');
 const { documents, readDocument } = await import('../src/ingestion/pipeline');
-const { chunkDocument } = await import('../src/ingestion/chunker');
-const { allChunks, replaceChunks } = await import('../src/retrieval/store');
+const { chunkDocument, splitSections } = await import('../src/ingestion/chunker');
+const { allChunks, replaceChunks, restoreIndex } = await import('../src/retrieval/store');
 const { evaluateFees } = await import('../src/banking/feePolicy');
 const { searchDocuments } = await import('../src/retrieval/search');
-const { embeddingKey, vectorBuffer, dimensions } = await import('../src/retrieval/embeddings');
+const { embeddingKey, vectorBuffer, readVector, dimensions } = await import(
+  '../src/retrieval/embeddings'
+);
 import type { BankMovement, Chunk, DocumentRecord } from '../src/types';
 
 const input = {
@@ -218,6 +221,141 @@ test('every chunk of a multi-part document carries the document metadata', () =>
   }
 });
 
+test('chunking splits on level-2 headings and keeps chunks within the bound', () => {
+  const doc: DocumentRecord = {
+    id: 'section-doc',
+    title: 'Section · test document',
+    file: 'unused.md',
+    version: 1,
+    validFrom: '2026-01-01',
+    validTo: null,
+    audience: 'public',
+    family: 'fees',
+  };
+  const text =
+    '# Section · test document\n\nPreamble before the first heading.\n\n' +
+    `## First section\n${'a'.repeat(700)}\n\n` +
+    '## Second section\nShort content here.\n';
+  const chunks = chunkDocument(doc, text);
+  // Every chunk stays within the sub-split window (before trimming there is
+  // no chunk above the bound at all).
+  assert.ok(chunks.every((c) => c.text.length <= 650));
+  // Each heading line stays inside its own section's chunks.
+  const headedChunks = chunks.filter((c) => c.text.startsWith('## '));
+  assert.equal(headedChunks.length, 2);
+  assert.ok(headedChunks.some((c) => c.text.startsWith('## First section')));
+  assert.ok(headedChunks.some((c) => c.text.startsWith('## Second section')));
+  // The preamble is its own chunk and does not bleed into the first section.
+  assert.ok(chunks.some((c) => c.text.includes('Preamble before the first heading.')));
+  // A long section is sub-split rather than truncated.
+  const firstSectionChunks = chunks.filter((c) => c.text.includes('## First section') || /^a+$/.test(c.text));
+  assert.ok(firstSectionChunks.length >= 2);
+  // Chunk ids are deterministic and content-addressed by (docId, offset, text).
+  const again = chunkDocument(doc, text);
+  assert.deepEqual(
+    again.map((c) => c.id),
+    chunks.map((c) => c.id),
+  );
+  // Expected (offset, trimmed text) pairs recomputed from the exported
+  // section splitter, then the id formula checked per chunk.
+  const expected: [number, string][] = [];
+  for (const [offset, section] of splitSections(text)) {
+    if (section.length <= 650) expected.push([offset, section.trim()]);
+    else
+      for (let i = 0; i < section.length; i += 650)
+        expected.push([offset + i, section.slice(i, i + 650).trim()]);
+  }
+  assert.deepEqual(
+    chunks.map((c) => c.text),
+    expected.map(([, t]) => t),
+  );
+  for (const [index, [offset, trimmed]] of expected.entries())
+    assert.equal(
+      createHash('sha256').update(`${doc.id}:${offset}:${trimmed}`).digest('hex').slice(0, 24),
+      chunks[index].id,
+    );
+});
+
+test('chunking drops pure-whitespace chunks', () => {
+  const doc: DocumentRecord = {
+    id: 'ws-doc',
+    title: 'Whitespace · test document',
+    file: 'unused.md',
+    version: 1,
+    validFrom: '2026-01-01',
+    validTo: null,
+    audience: 'public',
+    family: 'fees',
+  };
+  assert.deepEqual(chunkDocument(doc, '   \n\n \t \n'), []);
+  // A short heading-free document stays a single chunk; the whitespace-only
+  // middle section must not become a chunk of its own.
+  const chunks = chunkDocument(doc, 'content\n\n   \n\nmore content');
+  assert.equal(chunks.length, 1);
+  assert.match(chunks[0].text, /more content$/);
+});
+
+test('ingest embeds a document prefix while storing the clean text', async () => {
+  const { embeddingInputFor } = await import('../src/ingestion/pipeline');
+  const chunk: Chunk = {
+    id: 'chunk-prefix',
+    documentId: 'community-fees-2026',
+    text: 'The Community monthly fee is EUR 2 per month.',
+    title: 'Community · fees',
+    version: 2,
+    validFrom: '2026-01-01',
+    validTo: null,
+    audience: 'public',
+  };
+  const embedded = embeddingInputFor(chunk);
+  // The prefix carries the document identity ahead of the text.
+  assert.equal(
+    embedded,
+    `Community · fees · community-fees-2026 · v2\n${chunk.text}`,
+  );
+  // The embedding cache is keyed by a hash of the embedded string: the
+  // prefixed input and the raw text must not share a cache key.
+  assert.notEqual(embeddingKey(embedded), embeddingKey(chunk.text));
+  // The stored chunk text is untouched.
+  assert.equal(chunk.text, 'The Community monthly fee is EUR 2 per month.');
+});
+
+test('restoreIndex seeds the embedding cache with the ingest keying', async () => {
+  seedApp();
+  const { embeddingInputFor } = await import('../src/ingestion/pipeline');
+  const vector = Array.from({ length: dimensions }, (_, i) => (i === 1 ? 0.5 : 0));
+  const chunk = {
+    id: 'chunk-restore-key',
+    documentId: 'doc-restore-key',
+    text: 'The Aurora published monthly fee is EUR 6.',
+    title: 'Aurora · fees',
+    version: 2,
+    validFrom: '2026-01-01',
+    validTo: null,
+    audience: 'public',
+    vectorBase64: vectorBuffer(vector).toString('base64'),
+  };
+  restoreIndex({
+    format: 1,
+    model: config.embeddingModel,
+    dimensions,
+    chunks: [chunk],
+  });
+  const cached = (key: string) =>
+    appDb().prepare('SELECT vector FROM embedding_cache WHERE key=?').get(key) as
+      | { vector: Buffer }
+      | undefined;
+  // The restored entry is keyed by the prefixed embedding input, the same
+  // string the ingest path embedded: looking the chunk's embedding input up
+  // later must hit this entry.
+  const restored = cached(embeddingKey(embeddingInputFor(chunk)));
+  assert.ok(restored);
+  assert.deepEqual(readVector(restored.vector), vector);
+  // The raw chunk text must NOT be a cache key: a query equal to the clean
+  // text must never resolve to this chunk's vector.
+  assert.equal(cached(embeddingKey(chunk.text)), undefined);
+});
+
 test('search keeps only documents in force at the reference date', async () => {
   seedApp();
   const query = `validity-check-${Date.now()}`;
@@ -263,6 +401,214 @@ test('search keeps only documents in force at the reference date', async () => {
   );
   assert.equal(results[0].title, 'Validity · test');
   assert.equal(results[0].version, 1);
+  // Sources carry their validity metadata so answers can label them.
+  assert.equal(results[0].validFrom, '2026-01-01');
+  assert.equal(results[0].validTo, null);
+});
+
+test('search can include expired documents for historical questions', async () => {
+  seedApp();
+  const query = `historical-check-${Date.now()}`;
+  const queryVector = Array.from({ length: dimensions }, (_, i) => (i === 0 ? 1 : 0));
+  appDb()
+    .prepare('INSERT OR REPLACE INTO embedding_cache VALUES(?,?)')
+    .run(embeddingKey(query), vectorBuffer(queryVector));
+  const base = {
+    text: 'historical validity test chunk',
+    audience: 'public',
+    version: 1,
+    title: 'Validity · test',
+    validFrom: '2026-01-01',
+    validTo: null,
+  };
+  const expired = {
+    ...base,
+    id: 'chunk-expired-h',
+    documentId: 'doc-expired-h',
+    validTo: '2026-08-31',
+    vector: queryVector,
+  } as Chunk;
+  const current = {
+    ...base,
+    id: 'chunk-current-h',
+    documentId: 'doc-current-h',
+    validTo: null,
+    vector: queryVector.map((v) => v * 0.5),
+  } as Chunk;
+  const future = {
+    ...base,
+    id: 'chunk-future-h',
+    documentId: 'doc-future-h',
+    validFrom: '2026-10-01',
+    vector: queryVector.map((v) => v * 0.4),
+  } as Chunk;
+  replaceChunks([expired, current, future], { model: config.embeddingModel, dimensions });
+  const results = await searchDocuments(query, 'customer', 5, { includeExpired: true });
+  // Ended validity windows are returned (best score first); a not-yet-valid
+  // document is still excluded: it never applied.
+  assert.deepEqual(
+    results.map((r) => r.documentId),
+    ['doc-expired-h', 'doc-current-h'],
+  );
+  assert.equal(results[0].validTo, '2026-08-31');
+});
+
+test('the historical-intent classifier is conservative and deterministic', async () => {
+  const { isHistoricalQuery } = await import('../src/retrieval/search');
+  const historical = [
+    'What was the Aurora monthly fee before September 2026?',
+    'What did the terms say prior to the change?',
+    'Did the policy previously include a waiver?',
+    'What was formerly included in the plan?',
+    'I used to pay a lower fee.',
+    'Is that perk no longer offered?',
+    'What was the old monthly fee?',
+    'Are there older versions of this document?',
+    'What were the historical interest rates?',
+    'Can you check the archive for the previous price?',
+    'What was the fee last year?',
+    'What did it cost last month?',
+    'Was it different in 2025?',
+    'How much did it cost in 2024?',
+  ];
+  for (const query of historical)
+    assert.equal(isHistoricalQuery(query), true, `should be historical: ${query}`);
+  const current = [
+    'What is the Aurora monthly fee?',
+    'How do I open a Horizon account?',
+    'What is the maximum transfer amount?',
+    'How do I unfreeze my card?',
+    'Which documents apply today?',
+    'What is the limit for card payments?',
+  ];
+  for (const query of current)
+    assert.equal(isHistoricalQuery(query), false, `should not be historical: ${query}`);
+  // Pure function: same input, same verdict.
+  assert.equal(isHistoricalQuery('before'), isHistoricalQuery('before'));
+});
+
+const hasOpenAIKey = !!process.env.OPENAI_API_KEY?.trim();
+const apiTest = hasOpenAIKey ? test : test.skip;
+
+apiTest('a product-name query ranks the right product first', async () => {
+  seedApp();
+  // The corpus shares long boilerplate across all documents; the embedded
+  // document prefix must let the product identity decide the ranking.
+  for (const [query, product] of [
+    // The live product-name check: the top hit must be about Community, not
+    // another product (notice-community and community-* are both Community).
+    ['Community account', 'community'],
+    ['What is the monthly fee of the Community account?', 'community-fees'],
+    ['What is the monthly fee of the Aurora account?', 'aurora-fees'],
+  ] as const) {
+    const results = await searchDocuments(query, 'customer', 5);
+    assert.match(
+      results[0].documentId,
+      new RegExp(product),
+      `"${query}" should rank ${product} first, got ${results.map((r) => r.documentId).join(', ')}`,
+    );
+  }
+});
+
+apiTest('a historical Aurora question retrieves the archived EUR 8 fee', async () => {
+  seedApp();
+  const historical = 'What was the Aurora account monthly fee before September 2026?';
+  const { isHistoricalQuery } = await import('../src/retrieval/search');
+  assert.equal(isHistoricalQuery(historical), true);
+  const archived = await searchDocuments(historical, 'customer', 5, {
+    includeExpired: isHistoricalQuery(historical),
+  });
+  const source = archived.find((r) => r.documentId.startsWith('archive-aurora'));
+  assert.ok(source, `expected an archive-aurora source, got ${archived.map((r) => r.documentId).join(', ')}`);
+  assert.match(source.text, /EUR 8/);
+  assert.equal(source.validTo, '2026-08-31');
+  assert.ok(source.validTo! < '2026-09-24');
+  // Without the flag the archives stay excluded, as before.
+  const inForceOnly = await searchDocuments(historical, 'customer', 5);
+  assert.ok(inForceOnly.every((r) => !r.documentId.startsWith('archive-')));
+});
+
+test('search_documents passes the historical classifier verdict to the search', async () => {
+  seedApp();
+  const vector = Array.from({ length: dimensions }, (_, i) => (i === 0 ? 1 : 0));
+  const base = {
+    text: 'tool passthrough chunk',
+    audience: 'public',
+    version: 1,
+    title: 'Passthrough · test',
+    validFrom: '2026-01-01',
+    validTo: null,
+  };
+  replaceChunks(
+    [
+      {
+        ...base,
+        id: 'chunk-tool-expired',
+        documentId: 'doc-tool-expired',
+        validTo: '2026-08-31',
+        vector,
+      } as Chunk,
+      {
+        ...base,
+        id: 'chunk-tool-current',
+        documentId: 'doc-tool-current',
+        validTo: null,
+        vector: vector.map((v) => v * 0.5),
+      } as Chunk,
+    ],
+    { model: config.embeddingModel, dimensions },
+  );
+  // Stub the embeddings endpoint so the tool path runs without the network.
+  const originalFetch = globalThis.fetch;
+  const previousKey = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = 'test-key';
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.includes('/embeddings'))
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          model: 'test-model',
+          data: [{ object: 'embedding', index: 0, embedding: vector }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    return originalFetch(input, init);
+  }) as typeof fetch;
+  try {
+    const { runTool } = await import('../src/agent/tools');
+    const ctx = {
+      userId: 'lucia',
+      conversationId: null,
+      runId: 'run-search-tool',
+      intentId: 'intent-search-tool',
+    };
+    const historical = (await runTool('search_documents',
+      { query: 'What was the fee before August 2026?' },
+      ctx as any,
+    )) as any;
+    assert.ok(
+      historical.sources.some((s: any) => s.documentId === 'doc-tool-expired'),
+      'historical query should surface the expired source',
+    );
+    const expiredSource = historical.sources.find((s: any) => s.documentId === 'doc-tool-expired');
+    // The result keeps validity metadata so the model can label the source.
+    assert.equal(expiredSource.validTo, '2026-08-31');
+    assert.equal(expiredSource.validFrom, '2026-01-01');
+    assert.equal(expiredSource.version, 1);
+    const currentQuery = (await runTool('search_documents',
+      { query: 'What is the fee today?' },
+      ctx as any,
+    )) as any;
+    assert.ok(
+      currentQuery.sources.every((s: any) => s.documentId !== 'doc-tool-expired'),
+      'current query must exclude the expired source',
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey;
+  }
 });
 
 test('knowledge instructions require citations and forbid invented answers', async () => {
@@ -310,6 +656,39 @@ test('knowledge instructions require citations and forbid invented answers', asy
   assert.match(instructions, /Never invent an approval/i);
   // Citations are scoped to documentation claims, never transfer/tool statements.
   assert.match(instructions, /do NOT attach \[docId vN\] tokens to transfer or tool statements/i);
+});
+
+test('knowledge instructions label expired sources as historical and prefer in-force ones', async () => {
+  const { knowledgeInstructions } = await import('../src/agent/prompt');
+  const mkSource = (documentId: string, validTo: string | null) =>
+    ({
+      id: `chunk-${documentId}`,
+      documentId,
+      text: `The Aurora monthly fee is EUR 8 per month (${documentId}).`,
+      title: 'Aurora · archived conditions',
+      version: 1,
+      validFrom: '2026-01-01',
+      validTo,
+      audience: 'public',
+      score: 0.9,
+    }) as Chunk & { score: number };
+  const instructions = knowledgeInstructions([
+    mkSource('archive-aurora-1', '2026-08-31'),
+    mkSource('aurora-fees-2026', null),
+  ]);
+  // Expired sources are explicitly historical and no longer in force.
+  assert.match(instructions, /historical and no longer in force/i);
+  assert.match(instructions, /"inForce":false/);
+  assert.match(instructions, /"inForce":true/);
+  // The in-force value must come first when both exist.
+  assert.match(instructions, /present the in-force value first/i);
+  // Historical fee questions come from documentation, not fee_status.
+  assert.match(instructions, /Historical fee questions are answered from documentation/i);
+  // The model is told search_documents also covers archived documentation.
+  assert.match(instructions, /archived documentation/i);
+  // When the fee check does not cover an account, the published fee from the
+  // in-force documentation is the fallback, not an invented number.
+  assert.match(instructions, /published product fee/i);
 });
 
 test('search without an API key returns actionable configuration guidance', async () => {
