@@ -339,7 +339,7 @@ test('search without an API key returns actionable configuration guidance', asyn
     else process.env.OPENAI_API_KEY = previousKey;
   }
 });
-type FakeBankResponse = { status: number; payload?: unknown };
+type FakeBankResponse = { status: number; payload?: unknown; raw?: boolean };
 /**
  * Minimal in-process bank double implementing the documented contract so the
  * application-level transfer path can be tested without live services. The
@@ -367,7 +367,12 @@ function startFakeBank() {
         actor: String(req.headers['x-bank-actor'] ?? ''),
         body: raw ? JSON.parse(raw) : undefined,
       });
-      const respond = ({ status, payload }: FakeBankResponse) => {
+      const respond = ({ status, payload, raw }: FakeBankResponse) => {
+        if (raw) {
+          // A raw non-JSON body (e.g. an HTML error page from a proxy).
+          res.writeHead(status, { 'Content-Type': 'text/html' });
+          return res.end(String(payload ?? ''));
+        }
         res.writeHead(status, { 'Content-Type': 'application/json' });
         res.end(
           JSON.stringify(payload ?? (status < 400 ? {} : { error: 'Simulated bank failure.' })),
@@ -1093,12 +1098,161 @@ test('proposals without a conversation are not superseded by each other', async 
   })) as any;
   assert.equal(first.status, 'requires_confirmation');
   assert.equal(second.status, 'requires_confirmation');
-  // Without a conversation there is no supersede scope: both stay pending.
+  // Without a conversation different payloads are never superseded: both stay pending.
   const rows = appDb()
     .prepare('SELECT cancelled_at FROM approvals WHERE user_id=? ORDER BY rowid')
     .all('lucia') as any[];
   assert.equal(rows.length, 2);
   assert.deepEqual(rows.map((r) => r.cancelled_at), [null, null]);
+});
+
+test('repeated form submits with the same payload and no conversation reuse one approval', async () => {
+  seedApp();
+  fakeBank.operations.clear();
+  fakeBank.requests.length = 0;
+  resetApprovalBehavior();
+  // Two submissions of the same payload, each with its own intentId (exactly
+  // what a double click produces when the client identity is missed).
+  const first = (await transferMoney(transferContext('intent-form-a'), input)) as any;
+  const second = (await transferMoney(transferContext('intent-form-b'), input)) as any;
+  assert.equal(first.status, 'requires_confirmation');
+  assert.equal(second.status, 'requires_confirmation');
+  assert.equal(second.approvalId, first.approvalId);
+  // Exactly one pending no-conversation proposal for this user.
+  const pending = (
+    appDb()
+      .prepare(
+        `SELECT COUNT(*) n FROM approvals a JOIN intents i ON i.id=a.intent_id
+         WHERE a.user_id='lucia' AND i.conversation_id IS NULL
+           AND a.consumed_at IS NULL AND a.cancelled_at IS NULL`,
+      )
+      .get() as { n: number }
+  ).n;
+  assert.equal(pending, 1);
+  // A different payload creates a new proposal instead of reusing it.
+  const third = (await transferMoney(transferContext('intent-form-c'), {
+    ...input,
+    amountCents: 2500,
+  })) as any;
+  assert.equal(third.status, 'requires_confirmation');
+  assert.notEqual(third.approvalId, first.approvalId);
+});
+
+test('a non-JSON bank error body surfaces a clean BankError with the real status', async () => {
+  fakeBank.behavior.accounts = () => ({
+    status: 502,
+    payload: '<html>502 Bad Gateway</html>',
+    raw: true,
+  });
+  try {
+    const { bankRequest, BankError } = await import('../src/banking/client');
+    await assert.rejects(
+      () => bankRequest('lucia', '/v1/accounts'),
+      (e: unknown) =>
+        e instanceof BankError &&
+        e.status === 502 &&
+        e.message === 'The bank returned a non-JSON response.',
+    );
+    // JSON error bodies keep the documented behaviour (status + data.error).
+    fakeBank.behavior.accounts = () => ({ status: 503, payload: { error: 'Bank down.' } });
+    await assert.rejects(
+      () => bankRequest('lucia', '/v1/accounts'),
+      (e: unknown) => e instanceof BankError && e.status === 503 && e.message === 'Bank down.',
+    );
+  } finally {
+    fakeBank.behavior.accounts = null;
+  }
+});
+
+test('GET /api/people succeeds without a session cookie (intentional public route)', async () => {
+  const { GET } = await import('../app/api/[...path]/route');
+  const response = await GET(
+    new Request('http://localhost/api/people'),
+    { params: Promise.resolve({ path: ['people'] }) },
+  );
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as any[];
+  assert.ok(Array.isArray(body) && body.length > 0);
+});
+
+test('the agent run reports explicitly when it exhausts its tool rounds', async () => {
+  seedApp();
+  resetApprovalBehavior();
+  const previousKey = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = 'test-key';
+  const originalFetch = globalThis.fetch;
+  // The model keeps calling a tool forever, so the 7-round budget runs out.
+  const responsePayload = {
+    id: 'resp-incomplete-test',
+    object: 'response',
+    created_at: Math.floor(Date.now() / 1000),
+    status: 'completed',
+    model: 'gpt-test',
+    error: null,
+    output: [
+      {
+        type: 'function_call',
+        id: 'fc-1',
+        call_id: 'call-1',
+        name: 'list_accounts',
+        arguments: '{}',
+        status: 'completed',
+      },
+    ],
+    usage: {
+      input_tokens: 1,
+      input_tokens_details: { cached_tokens: 0 },
+      output_tokens: 1,
+      output_tokens_details: { reasoning_tokens: 0 },
+      total_tokens: 2,
+    },
+  };
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.includes('/responses'))
+      return new Response(JSON.stringify(responsePayload), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    return originalFetch(input, init);
+  }) as typeof fetch;
+  const conversationId = 'conv-incomplete';
+  appDb()
+    .prepare('INSERT INTO conversations VALUES(?,?,?,?)')
+    .run(conversationId, 'lucia', 'Incomplete', new Date().toISOString());
+  // Pre-cache the query embedding so searchDocuments needs no API call.
+  const content = `incomplete-run-${Date.now()}`;
+  appDb()
+    .prepare('INSERT OR REPLACE INTO embedding_cache VALUES(?,?)')
+    .run(
+      embeddingKey(content),
+      vectorBuffer(Array.from({ length: dimensions }, (_, i) => (i === 0 ? 1 : 0))),
+    );
+  try {
+    const { sendMessage } = await import('../src/agent/run');
+    const result = await sendMessage('lucia', conversationId, content);
+    // The answer states the exhaustion explicitly and offers a next step.
+    assert.match(result.answer, /could not complete/i);
+    assert.match(result.answer, /within the allowed steps/i);
+    assert.match(result.answer, /human support/i);
+    // The event is recorded for the operator.
+    const event = appDb()
+      .prepare("SELECT * FROM events WHERE run_id=? AND kind='run.incomplete'")
+      .get(result.runId) as any;
+    assert.ok(event);
+    assert.equal(JSON.parse(event.data).reason, 'rounds_exhausted');
+    // The stored assistant message carries the same explicit answer.
+    const last = appDb()
+      .prepare(
+        'SELECT content FROM messages WHERE conversation_id=? AND run_id=? ORDER BY rowid DESC',
+      )
+      .get(conversationId, result.runId) as any;
+    assert.match(last.content, /within the allowed steps/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey;
+  }
 });
 
 // --- Operator visibility: telemetry, case detail, case closure ---

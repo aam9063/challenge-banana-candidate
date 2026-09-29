@@ -118,6 +118,15 @@ export default function Home() {
   const [chatApprovals, setChatApprovals] = useState<AnyRecord[]>([]),
     [dismissedApprovals, setDismissedApprovals] = useState<string[]>([]);
   const activeConversation = useRef<string | null>(null);
+  // Submission identity of the manual transfer form: the same payload reuses
+  // the same intentId (a double click or repeat submit then reuses the same
+  // pending proposal server-side), a changed payload gets a new intent. It is
+  // cleared when the proposal is confirmed, discarded, superseded or the
+  // person changes, so the next submission starts fresh.
+  const formIntent = useRef<{ signature: string; intentId: string } | null>(null);
+  const clearFormIntent = () => {
+    formIntent.current = null;
+  };
   const generation = useRef(0),
     messagesEnd = useRef<HTMLDivElement>(null),
     confirmCardRef = useRef<HTMLElement>(null);
@@ -171,6 +180,7 @@ export default function Home() {
     setTo('');
     setAmount('');
     setConcept('');
+    clearFormIntent();
     setTab('overview');
     try {
       const result = await api('session', { userId: id });
@@ -343,16 +353,24 @@ export default function Home() {
     setBusy(true);
     setError('');
     setNotice('');
+    const payload = {
+      fromAccountId: from,
+      toAccountId: to,
+      amountCents: Math.round(Number(amount.replace(',', '.')) * 100),
+      concept,
+    };
+    // Reuse the intentId while the payload is unchanged: a fast double click
+    // or a repeat submit then maps to the same intent (and the server reuses
+    // the identical pending proposal) instead of creating a second one.
+    const signature = JSON.stringify(payload);
+    if (formIntent.current?.signature !== signature)
+      formIntent.current = { signature, intentId: crypto.randomUUID() };
     try {
       const result = await api('actions', {
         name: 'transfer_money',
-        arguments: {
-          fromAccountId: from,
-          toAccountId: to,
-          amountCents: Math.round(Number(amount.replace(',', '.')) * 100),
-          concept,
-        },
+        arguments: payload,
         conversationId,
+        intentId: formIntent.current.intentId,
       });
       if (g !== generation.current) return;
       if (result.status === 'requires_confirmation' && result.approvalId)
@@ -361,6 +379,7 @@ export default function Home() {
           expiresAt: result.expiresAt,
           proposal: result.proposal,
         });
+      else if (result.status === 'completed') clearFormIntent();
       setNotice(
         result.status === 'completed'
           ? 'Transfer completed. You can check it in your activity.'
@@ -385,7 +404,12 @@ export default function Home() {
           ? 'Transfer confirmed and completed.'
           : result.error || result.status,
       );
-      if (pending?.approvalId === id) setPending(null);
+      if (pending?.approvalId === id) {
+        setPending(null);
+        // The proposal is gone: the form's submission identity must not
+        // survive into the next, unrelated submission.
+        clearFormIntent();
+      }
       dismissApproval(id);
       await refresh(g);
       // The receipt message and the consumed proposal land without a refresh.
@@ -395,7 +419,10 @@ export default function Home() {
       const message = (e as Error).message;
       if (/already confirmed/i.test(message)) {
         // The proposal was consumed elsewhere; it is done, so drop the card.
-        if (pending?.approvalId === id) setPending(null);
+        if (pending?.approvalId === id) {
+          setPending(null);
+          clearFormIntent();
+        }
         dismissApproval(id);
         setNotice('This proposal was already confirmed.');
         try {
@@ -420,7 +447,10 @@ export default function Home() {
     try {
       await api(`approvals/${id}/cancel`, {});
       if (g !== generation.current) return;
-      if (pending?.approvalId === id) setPending(null);
+      if (pending?.approvalId === id) {
+        setPending(null);
+        clearFormIntent();
+      }
       dismissApproval(id);
       setNotice('Proposal discarded. The transfer was not sent.');
       await refresh(g);
@@ -430,7 +460,10 @@ export default function Home() {
       const message = (e as Error).message;
       if (/already confirmed/i.test(message)) {
         // Confirmed elsewhere: it is done, so drop the card and refresh.
-        if (pending?.approvalId === id) setPending(null);
+        if (pending?.approvalId === id) {
+          setPending(null);
+          clearFormIntent();
+        }
         dismissApproval(id);
         setNotice('This proposal was already confirmed.');
         try {
@@ -450,6 +483,9 @@ export default function Home() {
     setAmount(((proposal.amountCents || 0) / 100).toFixed(2));
     setConcept(proposal.concept || '');
     setPending(null);
+    // The old proposal is being discarded: the form fields change (or the
+    // user resubmits), so start a fresh submission identity.
+    clearFormIntent();
   }
   const operator = current?.role === 'operator';
   const nav = operator
